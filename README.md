@@ -18,7 +18,7 @@ It supports both screenshot styles:
 ## Requirements
 
 - macOS 13 or newer
-- Swift 6.2+ (if running from source)
+- Swift 5.10+ (if running from source)
 - Accessibility permission (required only for auto-paste)
 
 ## Quick Start (Source)

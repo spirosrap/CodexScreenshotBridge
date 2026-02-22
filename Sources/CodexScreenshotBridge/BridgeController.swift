@@ -50,18 +50,12 @@ final class BridgeController: ObservableObject {
     private let autoPasteService: CodexAutoPasteService
     private var isClipboardWatcherRunning = false
 
-    init(
-        defaults: UserDefaults = .standard,
-        watcher: ScreenshotWatcher = ScreenshotWatcher(),
-        clipboardWatcher: ClipboardWatcher = ClipboardWatcher(),
-        clipboardService: ClipboardService = ClipboardService(),
-        autoPasteService: CodexAutoPasteService = CodexAutoPasteService()
-    ) {
-        self.defaults = defaults
-        self.watcher = watcher
-        self.clipboardWatcher = clipboardWatcher
-        self.clipboardService = clipboardService
-        self.autoPasteService = autoPasteService
+    init() {
+        defaults = .standard
+        watcher = ScreenshotWatcher()
+        clipboardWatcher = ClipboardWatcher()
+        clipboardService = ClipboardService()
+        autoPasteService = CodexAutoPasteService()
 
         screenshotDirectoryPath = defaults.string(forKey: DefaultsKeys.screenshotDirectoryPath)
             ?? Self.defaultScreenshotDirectoryPath()
