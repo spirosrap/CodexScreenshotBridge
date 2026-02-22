@@ -182,11 +182,8 @@ final class BridgeController: ObservableObject {
             return
         }
 
-        guard isLikelyScreenshotClipboard(types: event.types) else {
-            return
-        }
-
-        addLog("Detected screenshot image in clipboard.")
+        let types = event.types.joined(separator: ", ")
+        addLog("Detected clipboard image (\(types)).")
         autoPasteIntoCodexIfEnabled(source: "clipboard screenshot")
     }
 
@@ -228,12 +225,6 @@ final class BridgeController: ObservableObject {
                 addLog("Clipboard watcher paused.")
             }
         }
-    }
-
-    private func isLikelyScreenshotClipboard(types: [String]) -> Bool {
-        let normalized = Set(types.map { $0.lowercased() })
-        return normalized.contains("apple png pasteboard type".lowercased()) ||
-            (normalized.contains("public.png") && normalized.contains("public.tiff"))
     }
 
     private var normalizedCodexBundleIdentifier: String? {
