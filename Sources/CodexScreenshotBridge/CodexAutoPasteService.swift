@@ -8,6 +8,7 @@ final class CodexAutoPasteService {
         case accessibilityPermissionMissing
         case codexNotFound
         case keyInjectionFailed
+        case screenshotGestureStillActive
 
         var errorDescription: String? {
             switch self {
@@ -17,6 +18,8 @@ final class CodexAutoPasteService {
                 return "Could not find the Codex app. Launch it first or set bundle ID."
             case .keyInjectionFailed:
                 return "Could not synthesize Cmd+V keyboard event."
+            case .screenshotGestureStillActive:
+                return "Screenshot gesture/UI still active. Try again after capture completes."
             }
         }
     }
@@ -33,10 +36,24 @@ final class CodexAutoPasteService {
         }
 
         try await waitForScreenshotModifiersToRelease()
+        try await waitForScreenshotUIToClose()
         let runningApp = try await activateCodexApp(bundleIdentifier: codexBundleIdentifier)
         await bringAppToFront(runningApp)
-        try await Task.sleep(for: .milliseconds(150))
-        try sendCommandV(targetProcessID: runningApp.processIdentifier)
+        try await Task.sleep(for: .milliseconds(120))
+
+        clickLikelyComposerArea(in: runningApp)
+        try await Task.sleep(for: .milliseconds(90))
+
+        try sendCommandVGlobal()
+
+        // If focused element is still not a likely text receiver, run one fallback attempt.
+        if focusedElementKind(expectedPID: runningApp.processIdentifier) == .other {
+            try await Task.sleep(for: .milliseconds(260))
+            await bringAppToFront(runningApp)
+            clickLikelyComposerArea(in: runningApp)
+            try await Task.sleep(for: .milliseconds(90))
+            try sendCommandVGlobal()
+        }
     }
 
     private func activateCodexApp(bundleIdentifier: String?) async throws -> NSRunningApplication {
@@ -150,7 +167,7 @@ final class CodexAutoPasteService {
         return candidates.first(where: { fileManager.fileExists(atPath: $0.path) })
     }
 
-    private func sendCommandV(targetProcessID: pid_t) throws {
+    private func sendCommandVGlobal() throws {
         guard let source = CGEventSource(stateID: .combinedSessionState),
               let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else {
@@ -159,8 +176,8 @@ final class CodexAutoPasteService {
 
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand
-        keyDown.postToPid(targetProcessID)
-        keyUp.postToPid(targetProcessID)
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
     }
 
     private func bringAppToFront(_ app: NSRunningApplication) async {
@@ -183,7 +200,7 @@ final class CodexAutoPasteService {
             59, 62, // control
         ]
 
-        for _ in 0..<30 {
+        for _ in 0..<250 {
             let anyDown = modifierKeys.contains {
                 CGEventSource.keyState(.combinedSessionState, key: $0)
             }
@@ -194,5 +211,159 @@ final class CodexAutoPasteService {
 
             try await Task.sleep(for: .milliseconds(40))
         }
+
+        throw AutoPasteError.screenshotGestureStillActive
+    }
+
+    private func waitForScreenshotUIToClose() async throws {
+        for _ in 0..<160 {
+            let frontmost = NSWorkspace.shared.frontmostApplication
+            let bundleID = frontmost?.bundleIdentifier?.lowercased() ?? ""
+            let appName = frontmost?.localizedName?.lowercased() ?? ""
+
+            let screenshotActive = bundleID == "com.apple.screenshot" ||
+                appName.contains("screenshot")
+
+            if !screenshotActive {
+                return
+            }
+
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        throw AutoPasteError.screenshotGestureStillActive
+    }
+
+    private func clickLikelyComposerArea(in app: NSRunningApplication) {
+        guard let bounds = focusedWindowBounds(for: app.processIdentifier),
+              let source = CGEventSource(stateID: .combinedSessionState) else {
+            return
+        }
+
+        // Codex composer is near the lower section of the main content area.
+        let clickPoint = CGPoint(
+            x: bounds.midX,
+            y: bounds.maxY - min(92.0, max(54.0, bounds.height * 0.12))
+        )
+
+        let move = CGEvent(
+            mouseEventSource: source,
+            mouseType: .mouseMoved,
+            mouseCursorPosition: clickPoint,
+            mouseButton: .left
+        )
+        let down = CGEvent(
+            mouseEventSource: source,
+            mouseType: .leftMouseDown,
+            mouseCursorPosition: clickPoint,
+            mouseButton: .left
+        )
+        let up = CGEvent(
+            mouseEventSource: source,
+            mouseType: .leftMouseUp,
+            mouseCursorPosition: clickPoint,
+            mouseButton: .left
+        )
+
+        move?.post(tap: .cghidEventTap)
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
+    }
+
+    private enum FocusedElementKind {
+        case textLike
+        case other
+        case unavailable
+    }
+
+    private func focusedElementKind(expectedPID: pid_t) -> FocusedElementKind {
+        let systemElement = AXUIElementCreateSystemWide()
+        var focusedObject: CFTypeRef?
+
+        guard AXUIElementCopyAttributeValue(
+            systemElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedObject
+        ) == .success,
+        let focusedObject else {
+            return .unavailable
+        }
+
+        let focusedElement = focusedObject as! AXUIElement
+        var focusedPID: pid_t = 0
+        AXUIElementGetPid(focusedElement, &focusedPID)
+
+        guard focusedPID == expectedPID else {
+            return .other
+        }
+
+        var roleObject: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXRoleAttribute as CFString,
+            &roleObject
+        ) == .success,
+        let role = roleObject as? String else {
+            return .other
+        }
+
+        switch role {
+        case "AXTextArea",
+             "AXTextField",
+             "AXSearchField",
+             "AXWebArea",
+             "AXComboBox":
+            return .textLike
+        default:
+            return .other
+        }
+    }
+
+    private func focusedWindowBounds(for processID: pid_t) -> CGRect? {
+        let appElement = AXUIElementCreateApplication(processID)
+        var windowObject: CFTypeRef?
+
+        guard AXUIElementCopyAttributeValue(
+            appElement,
+            kAXFocusedWindowAttribute as CFString,
+            &windowObject
+        ) == .success,
+        let windowObject else {
+            return nil
+        }
+
+        let windowElement = windowObject as! AXUIElement
+        var positionObject: CFTypeRef?
+        var sizeObject: CFTypeRef?
+
+        guard AXUIElementCopyAttributeValue(
+            windowElement,
+            kAXPositionAttribute as CFString,
+            &positionObject
+        ) == .success,
+        AXUIElementCopyAttributeValue(
+            windowElement,
+            kAXSizeAttribute as CFString,
+            &sizeObject
+        ) == .success,
+        let positionObject,
+        let sizeObject else {
+            return nil
+        }
+
+        let positionValue = positionObject as! AXValue
+        let sizeValue = sizeObject as! AXValue
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+
+        guard AXValueGetType(positionValue) == .cgPoint,
+              AXValueGetType(sizeValue) == .cgSize,
+              AXValueGetValue(positionValue, .cgPoint, &position),
+              AXValueGetValue(sizeValue, .cgSize, &size) else {
+            return nil
+        }
+
+        return CGRect(origin: position, size: size)
     }
 }
