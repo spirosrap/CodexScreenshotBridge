@@ -6,6 +6,8 @@ It supports both screenshot styles:
 - file-based screenshots (saved to disk)
 - clipboard-only screenshots (copy shortcut flow)
 
+![Codex Screenshot Bridge demo](assets/codex-screenshot-bridge-demo.png)
+
 ## Features
 
 - Menu-bar app (`LSUIElement`) with instant enable/disable toggle
