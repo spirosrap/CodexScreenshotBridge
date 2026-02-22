@@ -12,12 +12,15 @@ final class ClipboardWatcher: @unchecked Sendable {
     private var timer: Timer?
     private var lastChangeCount = NSPasteboard.general.changeCount
     private var ignoredChangeCounts: Set<Int> = []
+    private var pendingChangeCount: Int?
+    private var pendingRetryCount = 0
+    private let maxImageResolutionRetries = 14
 
     func start() {
         stop()
 
         lastChangeCount = NSPasteboard.general.changeCount
-        let timer = Timer(timeInterval: 0.22, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.12, repeats: true) { [weak self] _ in
             self?.pollPasteboard()
         }
         self.timer = timer
@@ -28,6 +31,8 @@ final class ClipboardWatcher: @unchecked Sendable {
         timer?.invalidate()
         timer = nil
         ignoredChangeCounts.removeAll()
+        pendingChangeCount = nil
+        pendingRetryCount = 0
         lastChangeCount = NSPasteboard.general.changeCount
     }
 
@@ -37,23 +42,38 @@ final class ClipboardWatcher: @unchecked Sendable {
 
     private func pollPasteboard() {
         let pasteboard = NSPasteboard.general
-        let changeCount = pasteboard.changeCount
-        guard changeCount != lastChangeCount else {
+        let currentChangeCount = pasteboard.changeCount
+
+        if currentChangeCount != lastChangeCount {
+            lastChangeCount = currentChangeCount
+            pendingChangeCount = currentChangeCount
+            pendingRetryCount = 0
+        }
+
+        guard let changeCount = pendingChangeCount else {
             return
         }
 
-        lastChangeCount = changeCount
-
         if ignoredChangeCounts.remove(changeCount) != nil {
+            pendingChangeCount = nil
+            pendingRetryCount = 0
             return
         }
 
         guard NSImage(pasteboard: pasteboard) != nil else {
+            if pendingRetryCount < maxImageResolutionRetries {
+                pendingRetryCount += 1
+            } else {
+                pendingChangeCount = nil
+                pendingRetryCount = 0
+            }
             return
         }
 
         let types = (pasteboard.types ?? []).map(\.rawValue)
         let event = ClipboardImageEvent(changeCount: changeCount, types: types)
         onClipboardImage?(event)
+        pendingChangeCount = nil
+        pendingRetryCount = 0
     }
 }
