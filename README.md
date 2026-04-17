@@ -15,6 +15,7 @@ It supports both screenshot styles:
 - Watches clipboard for screenshot image captures
 - Optional auto-focus Codex + send `Cmd+V`
 - Handles both the fresh-project welcome composer and the normal conversation composer
+- Detects the initial Codex screen with a one-shot window snapshot plus OCR of the heading region
 - Optional custom Codex bundle ID if app auto-detection is unreliable
 - Small in-app event log for troubleshooting
 
@@ -23,6 +24,7 @@ It supports both screenshot styles:
 - macOS 13 or newer
 - Swift 5.10+ (if running from source)
 - Accessibility permission (required only for auto-paste)
+- Screen Recording permission if you want the startup-screen detector to identify the initial Codex view reliably
 
 ## Quick Start (Source)
 
@@ -57,6 +59,13 @@ For automatic paste (`Cmd+V`) you must allow Accessibility access:
 
 Without this permission, clipboard copy still works but key injection is blocked by macOS.
 
+For reliable detection of the initial Codex screen, allow Screen Recording:
+
+1. Open `System Settings` -> `Privacy & Security` -> `Screen Recording`.
+2. Enable `CodexScreenshotBridge` (or Terminal/Xcode if running from source).
+
+This is used only to capture a single still image of the Codex window during auto-paste so the app can tell whether Codex is showing the initial centered composer or the normal conversation composer. It is not a continuous recording or video stream.
+
 ## Configuration Notes
 
 - Default screenshot folder is read from `com.apple.screencapture location` and falls back to `~/Desktop`.
@@ -66,7 +75,8 @@ Without this permission, clipboard copy still works but key injection is blocked
 ## Troubleshooting
 
 - Nothing pastes: verify Accessibility permission and keep Codex running.
-- Fresh project screen does not paste: update to version `1.1.1` or newer, which retries the higher welcome-screen composer before falling back to the normal chat composer.
+- Initial screen does not paste: verify Screen Recording permission. The startup-screen detector needs one-shot access to the Codex window image.
+- Initial screen still misses after permission is granted: make sure you are on a current build from `main`, which detects the centered startup composer before clicking.
 - App cannot find Codex: set `Codex bundle ID` in the app menu.
 - File-based screenshots not detected: set the correct screenshot folder from `Choose Folder`.
 
