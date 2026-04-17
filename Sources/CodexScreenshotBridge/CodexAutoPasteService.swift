@@ -4,6 +4,11 @@ import Foundation
 
 @MainActor
 final class CodexAutoPasteService {
+    private enum ComposerLayout {
+        case conversation
+        case firstPrompt
+    }
+
     enum AutoPasteError: LocalizedError {
         case accessibilityPermissionMissing
         case codexNotFound
@@ -41,17 +46,18 @@ final class CodexAutoPasteService {
         await bringAppToFront(runningApp)
         try await Task.sleep(for: .milliseconds(120))
 
-        clickLikelyComposerArea(in: runningApp)
+        clickLikelyComposerArea(in: runningApp, layout: .conversation)
         try await Task.sleep(for: .milliseconds(90))
 
         try sendCommandVGlobal()
 
-        // If focused element is still not a likely text receiver, run one fallback attempt.
-        if focusedElementKind(expectedPID: runningApp.processIdentifier) == .other {
+        // New projects show a centered first-prompt composer instead of the bottom reply bar.
+        // Retry against that layout when the usual conversation focus target is not active.
+        if focusedElementKind(expectedPID: runningApp.processIdentifier) != .textLike {
             try await Task.sleep(for: .milliseconds(260))
             await bringAppToFront(runningApp)
-            clickLikelyComposerArea(in: runningApp)
-            try await Task.sleep(for: .milliseconds(90))
+            clickLikelyComposerArea(in: runningApp, layout: .firstPrompt)
+            try await Task.sleep(for: .milliseconds(150))
             try sendCommandVGlobal()
         }
     }
@@ -234,40 +240,77 @@ final class CodexAutoPasteService {
         throw AutoPasteError.screenshotGestureStillActive
     }
 
-    private func clickLikelyComposerArea(in app: NSRunningApplication) {
+    private func clickLikelyComposerArea(in app: NSRunningApplication, layout: ComposerLayout) {
         guard let bounds = focusedWindowBounds(for: app.processIdentifier),
               let source = CGEventSource(stateID: .combinedSessionState) else {
             return
         }
 
-        // Codex composer is near the lower section of the main content area.
-        let clickPoint = CGPoint(
-            x: bounds.midX,
-            y: bounds.maxY - min(92.0, max(54.0, bounds.height * 0.12))
-        )
+        for clickPoint in composerClickPoints(in: bounds, layout: layout) {
+            let move = CGEvent(
+                mouseEventSource: source,
+                mouseType: .mouseMoved,
+                mouseCursorPosition: clickPoint,
+                mouseButton: .left
+            )
+            let down = CGEvent(
+                mouseEventSource: source,
+                mouseType: .leftMouseDown,
+                mouseCursorPosition: clickPoint,
+                mouseButton: .left
+            )
+            let up = CGEvent(
+                mouseEventSource: source,
+                mouseType: .leftMouseUp,
+                mouseCursorPosition: clickPoint,
+                mouseButton: .left
+            )
 
-        let move = CGEvent(
-            mouseEventSource: source,
-            mouseType: .mouseMoved,
-            mouseCursorPosition: clickPoint,
-            mouseButton: .left
-        )
-        let down = CGEvent(
-            mouseEventSource: source,
-            mouseType: .leftMouseDown,
-            mouseCursorPosition: clickPoint,
-            mouseButton: .left
-        )
-        let up = CGEvent(
-            mouseEventSource: source,
-            mouseType: .leftMouseUp,
-            mouseCursorPosition: clickPoint,
-            mouseButton: .left
-        )
+            move?.post(tap: .cghidEventTap)
+            down?.post(tap: .cghidEventTap)
+            up?.post(tap: .cghidEventTap)
+        }
+    }
 
-        move?.post(tap: .cghidEventTap)
-        down?.post(tap: .cghidEventTap)
-        up?.post(tap: .cghidEventTap)
+    private func composerClickPoints(in bounds: CGRect, layout: ComposerLayout) -> [CGPoint] {
+        switch layout {
+        case .conversation:
+            return makePoints(
+                in: bounds,
+                xFractions: [0.68, 0.8],
+                yFractions: [0.91]
+            )
+        case .firstPrompt:
+            // Fresh projects use the centered "What should we work on?" composer.
+            return makePoints(
+                in: bounds,
+                xFractions: [0.56, 0.72, 0.86],
+                yFractions: [0.39, 0.43]
+            )
+        }
+    }
+
+    private func makePoints(
+        in bounds: CGRect,
+        xFractions: [CGFloat],
+        yFractions: [CGFloat]
+    ) -> [CGPoint] {
+        var points: [CGPoint] = []
+        points.reserveCapacity(xFractions.count * yFractions.count)
+
+        for yFraction in yFractions {
+            let y = bounds.minY + (bounds.height * yFraction)
+            for xFraction in xFractions {
+                points.append(
+                    CGPoint(
+                        x: bounds.minX + (bounds.width * xFraction),
+                        y: y
+                    )
+                )
+            }
+        }
+
+        return points
     }
 
     private enum FocusedElementKind {

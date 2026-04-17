@@ -14,6 +14,7 @@ It supports both screenshot styles:
 - Watches screenshot folder for new files and copies image to clipboard
 - Watches clipboard for screenshot image captures
 - Optional auto-focus Codex + send `Cmd+V`
+- Handles both the fresh-project welcome composer and the normal conversation composer
 - Optional custom Codex bundle ID if app auto-detection is unreliable
 - Small in-app event log for troubleshooting
 
@@ -65,6 +66,7 @@ Without this permission, clipboard copy still works but key injection is blocked
 ## Troubleshooting
 
 - Nothing pastes: verify Accessibility permission and keep Codex running.
+- Fresh project screen does not paste: update to version `1.1.1` or newer, which retries the higher welcome-screen composer before falling back to the normal chat composer.
 - App cannot find Codex: set `Codex bundle ID` in the app menu.
 - File-based screenshots not detected: set the correct screenshot folder from `Choose Folder`.
 

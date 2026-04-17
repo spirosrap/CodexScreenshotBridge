@@ -4,8 +4,8 @@ set -euo pipefail
 APP_NAME="CodexScreenshotBridge"
 PRODUCT_NAME="${PRODUCT_NAME:-$APP_NAME}"
 BUNDLE_ID="${BUNDLE_ID:-com.spirosraptis.CodexScreenshotBridge}"
-VERSION="${VERSION:-1.1.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-1}"
+VERSION="${VERSION:-1.1.1}"
+BUILD_NUMBER="${BUILD_NUMBER:-2}"
 MIN_MACOS="${MIN_MACOS:-13.0}"
 OUTPUT_APP="${OUTPUT_APP:-$HOME/Applications/${APP_NAME}.app}"
 
