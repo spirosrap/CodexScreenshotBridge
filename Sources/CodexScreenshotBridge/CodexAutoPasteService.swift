@@ -43,6 +43,10 @@ final class CodexAutoPasteService {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    private let pasteKey: CGKeyCode = 9
+    private let probeTextKey: CGKeyCode = 7 // x
+    private let backspaceKey: CGKeyCode = 51
+
     func activateCodexAndPaste(codexBundleIdentifier: String?) async throws {
         guard ensureAccessibilityPermission(prompt: true) else {
             throw AutoPasteError.accessibilityPermissionMissing
@@ -56,7 +60,9 @@ final class CodexAutoPasteService {
 
         let layout = await composerLayout(for: runningApp.processIdentifier)
 
-        clickLikelyComposerArea(in: runningApp, layout: layout)
+        clickPoints(
+            composerActivationPoints(in: runningApp.processIdentifier, layout: layout)
+        )
         try await Task.sleep(for: .milliseconds(50))
 
         try sendCommandVGlobal()
@@ -175,14 +181,18 @@ final class CodexAutoPasteService {
     }
 
     private func sendCommandVGlobal() throws {
+        try sendKeyGlobal(pasteKey, flags: .maskCommand)
+    }
+
+    private func sendKeyGlobal(_ keyCode: CGKeyCode, flags: CGEventFlags = []) throws {
         guard let source = CGEventSource(stateID: .combinedSessionState),
-              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else {
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
             throw AutoPasteError.keyInjectionFailed
         }
 
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
+        keyDown.flags = flags
+        keyUp.flags = flags
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
     }
@@ -241,13 +251,13 @@ final class CodexAutoPasteService {
         throw AutoPasteError.screenshotGestureStillActive
     }
 
-    private func clickLikelyComposerArea(in app: NSRunningApplication, layout: ComposerLayout) {
-        guard let bounds = focusedWindowBounds(for: app.processIdentifier),
+    private func clickPoints(_ points: [CGPoint]) {
+        guard !points.isEmpty,
               let source = CGEventSource(stateID: .combinedSessionState) else {
             return
         }
 
-        for clickPoint in composerClickPoints(in: bounds, layout: layout) {
+        for clickPoint in points {
             let move = CGEvent(
                 mouseEventSource: source,
                 mouseType: .mouseMoved,
@@ -274,10 +284,20 @@ final class CodexAutoPasteService {
     }
 
     private func reinforceComposerFocus(in app: NSRunningApplication, layout: ComposerLayout) async throws {
-        try await Task.sleep(for: .milliseconds(60))
+        let delay: Duration = layout == .firstPrompt ? .milliseconds(140) : .milliseconds(80)
+        try await Task.sleep(for: delay)
         await bringAppToFront(app)
 
-        clickLikelyComposerArea(in: app, layout: layout)
+        clickPoints(
+            composerEditorFocusPoints(in: app.processIdentifier, layout: layout)
+        )
+
+        if layout == .firstPrompt {
+            try await Task.sleep(for: .milliseconds(90))
+            try sendKeyGlobal(probeTextKey)
+            try await Task.sleep(for: .milliseconds(50))
+            try sendKeyGlobal(backspaceKey)
+        }
     }
 
     private func composerLayout(for processID: pid_t) async -> ComposerLayout {
@@ -288,7 +308,7 @@ final class CodexAutoPasteService {
         return .conversation
     }
 
-    private func composerClickPoints(in bounds: CGRect, layout: ComposerLayout) -> [CGPoint] {
+    private func composerActivationPoints(for bounds: CGRect, layout: ComposerLayout) -> [CGPoint] {
         switch layout {
         case .conversation:
             return makePoints(
@@ -302,6 +322,33 @@ final class CodexAutoPasteService {
                 in: bounds,
                 xFractions: [0.42, 0.54, 0.66],
                 yFractions: [0.39, 0.43]
+            )
+        }
+    }
+
+    private func composerActivationPoints(in processID: pid_t, layout: ComposerLayout) -> [CGPoint] {
+        guard let bounds = focusedWindowBounds(for: processID) else {
+            return []
+        }
+
+        return composerActivationPoints(for: bounds, layout: layout)
+    }
+
+    private func composerEditorFocusPoints(in processID: pid_t, layout: ComposerLayout) -> [CGPoint] {
+        guard let bounds = focusedWindowBounds(for: processID) else {
+            return []
+        }
+
+        switch layout {
+        case .conversation:
+            return composerActivationPoints(for: bounds, layout: layout)
+        case .firstPrompt:
+            // After an image is pasted into the startup composer, the editor line
+            // sits farther left than the empty-state activation area.
+            return makePoints(
+                in: bounds,
+                xFractions: [0.10, 0.14],
+                yFractions: [0.398]
             )
         }
     }

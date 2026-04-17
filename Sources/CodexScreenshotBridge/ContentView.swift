@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -79,6 +80,12 @@ struct ContentView: View {
                 }
             }
             .frame(height: 120)
+
+            Divider()
+
+            Button("Quit Codex Screenshot Bridge") {
+                NSApp.terminate(nil)
+            }
         }
         .padding(14)
         .frame(width: 430)
