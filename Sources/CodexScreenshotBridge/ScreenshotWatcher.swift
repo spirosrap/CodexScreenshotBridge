@@ -102,7 +102,7 @@ final class ScreenshotWatcher: @unchecked Sendable {
         }
 
         pendingScanWorkItem = workItem
-        queue.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+        queue.asyncAfter(deadline: .now() + 0.08, execute: workItem)
     }
 
     private func scanForNewScreenshotsOnQueue() {

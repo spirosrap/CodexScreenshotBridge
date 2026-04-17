@@ -1,6 +1,8 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import ScreenCaptureKit
+import Vision
 
 @MainActor
 final class CodexAutoPasteService {
@@ -8,6 +10,12 @@ final class CodexAutoPasteService {
         case conversation
         case firstPrompt
     }
+
+    private static let initialScreenMarkers = [
+        "what should we",
+        "think of a suitable starter task",
+        "connect your favorite apps to codex",
+    ]
 
     enum AutoPasteError: LocalizedError {
         case accessibilityPermissionMissing
@@ -44,22 +52,15 @@ final class CodexAutoPasteService {
         try await waitForScreenshotUIToClose()
         let runningApp = try await activateCodexApp(bundleIdentifier: codexBundleIdentifier)
         await bringAppToFront(runningApp)
-        try await Task.sleep(for: .milliseconds(120))
+        try await Task.sleep(for: .milliseconds(60))
 
-        clickLikelyComposerArea(in: runningApp, layout: .conversation)
-        try await Task.sleep(for: .milliseconds(90))
+        let layout = await composerLayout(for: runningApp.processIdentifier)
+
+        clickLikelyComposerArea(in: runningApp, layout: layout)
+        try await Task.sleep(for: .milliseconds(50))
 
         try sendCommandVGlobal()
-
-        // New projects show a centered first-prompt composer instead of the bottom reply bar.
-        // Retry against that layout when the usual conversation focus target is not active.
-        if focusedElementKind(expectedPID: runningApp.processIdentifier) != .textLike {
-            try await Task.sleep(for: .milliseconds(260))
-            await bringAppToFront(runningApp)
-            clickLikelyComposerArea(in: runningApp, layout: .firstPrompt)
-            try await Task.sleep(for: .milliseconds(150))
-            try sendCommandVGlobal()
-        }
+        try await reinforceComposerFocus(in: runningApp, layout: layout)
     }
 
     private func activateCodexApp(bundleIdentifier: String?) async throws -> NSRunningApplication {
@@ -272,19 +273,34 @@ final class CodexAutoPasteService {
         }
     }
 
+    private func reinforceComposerFocus(in app: NSRunningApplication, layout: ComposerLayout) async throws {
+        try await Task.sleep(for: .milliseconds(60))
+        await bringAppToFront(app)
+
+        clickLikelyComposerArea(in: app, layout: layout)
+    }
+
+    private func composerLayout(for processID: pid_t) async -> ComposerLayout {
+        if await initialPromptScreenIsVisible(for: processID) {
+            return .firstPrompt
+        }
+
+        return .conversation
+    }
+
     private func composerClickPoints(in bounds: CGRect, layout: ComposerLayout) -> [CGPoint] {
         switch layout {
         case .conversation:
             return makePoints(
                 in: bounds,
-                xFractions: [0.68, 0.8],
+                xFractions: [0.5],
                 yFractions: [0.91]
             )
         case .firstPrompt:
             // Fresh projects use the centered "What should we work on?" composer.
             return makePoints(
                 in: bounds,
-                xFractions: [0.56, 0.72, 0.86],
+                xFractions: [0.42, 0.54, 0.66],
                 yFractions: [0.39, 0.43]
             )
         }
@@ -311,55 +327,6 @@ final class CodexAutoPasteService {
         }
 
         return points
-    }
-
-    private enum FocusedElementKind {
-        case textLike
-        case other
-        case unavailable
-    }
-
-    private func focusedElementKind(expectedPID: pid_t) -> FocusedElementKind {
-        let systemElement = AXUIElementCreateSystemWide()
-        var focusedObject: CFTypeRef?
-
-        guard AXUIElementCopyAttributeValue(
-            systemElement,
-            kAXFocusedUIElementAttribute as CFString,
-            &focusedObject
-        ) == .success,
-        let focusedObject else {
-            return .unavailable
-        }
-
-        let focusedElement = focusedObject as! AXUIElement
-        var focusedPID: pid_t = 0
-        AXUIElementGetPid(focusedElement, &focusedPID)
-
-        guard focusedPID == expectedPID else {
-            return .other
-        }
-
-        var roleObject: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            focusedElement,
-            kAXRoleAttribute as CFString,
-            &roleObject
-        ) == .success,
-        let role = roleObject as? String else {
-            return .other
-        }
-
-        switch role {
-        case "AXTextArea",
-             "AXTextField",
-             "AXSearchField",
-             "AXWebArea",
-             "AXComboBox":
-            return .textLike
-        default:
-            return .other
-        }
     }
 
     private func focusedWindowBounds(for processID: pid_t) -> CGRect? {
@@ -408,5 +375,105 @@ final class CodexAutoPasteService {
         }
 
         return CGRect(origin: position, size: size)
+    }
+
+    private func initialPromptScreenIsVisible(for processID: pid_t) async -> Bool {
+        guard #available(macOS 14.0, *) else {
+            return false
+        }
+
+        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+            return false
+        }
+
+        do {
+            guard let image = try await captureFocusedWindowImage(for: processID),
+                  let recognizedText = recognizeInitialScreenText(in: image) else {
+                return false
+            }
+
+            let normalizedText = recognizedText.lowercased()
+            return Self.initialScreenMarkers.contains(where: normalizedText.contains)
+        } catch {
+            return false
+        }
+    }
+
+    @available(macOS 14.0, *)
+    private func captureFocusedWindowImage(for processID: pid_t) async throws -> CGImage? {
+        guard let focusedBounds = focusedWindowBounds(for: processID) else {
+            return nil
+        }
+
+        let shareableContent = try await SCShareableContent.excludingDesktopWindows(
+            false,
+            onScreenWindowsOnly: true
+        )
+
+        let candidates = shareableContent.windows.filter { window in
+            window.owningApplication?.processID == processID &&
+                window.windowLayer == 0
+        }
+
+        guard let window = candidates.min(by: { lhs, rhs in
+            windowMatchScore(lhs.frame, target: focusedBounds) <
+                windowMatchScore(rhs.frame, target: focusedBounds)
+        }) else {
+            return nil
+        }
+
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let configuration = SCStreamConfiguration()
+        configuration.width = max(Int(window.frame.width), 1)
+        configuration.height = max(Int(window.frame.height), 1)
+        configuration.scalesToFit = true
+
+        return try await withCheckedThrowingContinuation { continuation in
+            SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: configuration
+            ) { image, error in
+                if let image {
+                    continuation.resume(returning: image)
+                    return
+                }
+
+                continuation.resume(
+                    throwing: error ?? AutoPasteError.codexNotFound
+                )
+            }
+        }
+    }
+
+    private func windowMatchScore(_ candidate: CGRect, target: CGRect) -> CGFloat {
+        abs(candidate.minX - target.minX) +
+            abs(candidate.minY - target.minY) +
+            abs(candidate.width - target.width) +
+            abs(candidate.height - target.height)
+    }
+
+    private func recognizeInitialScreenText(in image: CGImage) -> String? {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .fast
+        request.usesLanguageCorrection = false
+        request.recognitionLanguages = ["en-US"]
+        request.regionOfInterest = CGRect(x: 0.30, y: 0.52, width: 0.68, height: 0.22)
+
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            return nil
+        }
+
+        let lines = (request.results ?? []).compactMap { result in
+            result.topCandidates(1).first?.string
+        }
+
+        guard !lines.isEmpty else {
+            return nil
+        }
+
+        return lines.joined(separator: "\n")
     }
 }
