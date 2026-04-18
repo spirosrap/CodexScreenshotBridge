@@ -2,65 +2,74 @@ import AppKit
 import Foundation
 
 @MainActor
-final class BridgeController: ObservableObject {
-    private enum DefaultsKeys {
-        static let bridgeEnabled = "bridgeEnabled"
-        static let autoPasteEnabled = "autoPasteEnabled"
-        static let listenClipboardImages = "listenClipboardImages"
-        static let screenshotDirectoryPath = "screenshotDirectoryPath"
-        static let codexBundleIdentifier = "codexBundleIdentifier"
+package final class BridgeController: ObservableObject {
+    package enum DefaultsKeys {
+        package static let bridgeEnabled = "bridgeEnabled"
+        package static let autoPasteEnabled = "autoPasteEnabled"
+        package static let listenClipboardImages = "listenClipboardImages"
+        package static let screenshotDirectoryPath = "screenshotDirectoryPath"
+        package static let codexBundleIdentifier = "codexBundleIdentifier"
     }
 
-    @Published var bridgeEnabled: Bool {
+    @Published package var bridgeEnabled: Bool {
         didSet {
             defaults.set(bridgeEnabled, forKey: DefaultsKeys.bridgeEnabled)
             bridgeEnabledDidChange()
         }
     }
 
-    @Published var autoPasteEnabled: Bool {
+    @Published package var autoPasteEnabled: Bool {
         didSet {
             defaults.set(autoPasteEnabled, forKey: DefaultsKeys.autoPasteEnabled)
         }
     }
 
-    @Published var listenClipboardImages: Bool {
+    @Published package var listenClipboardImages: Bool {
         didSet {
             defaults.set(listenClipboardImages, forKey: DefaultsKeys.listenClipboardImages)
             syncClipboardWatcherState()
         }
     }
 
-    @Published var codexBundleIdentifier: String {
+    @Published package var codexBundleIdentifier: String {
         didSet {
             defaults.set(codexBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines),
                          forKey: DefaultsKeys.codexBundleIdentifier)
         }
     }
 
-    @Published private(set) var screenshotDirectoryPath: String
-    @Published private(set) var isWatching = false
-    @Published private(set) var statusMessage = "Starting..."
-    @Published private(set) var recentEvents: [String] = []
-    @Published private(set) var accessibilityPermissionGranted = false
-    @Published private(set) var screenRecordingPermissionGranted = false
+    @Published package private(set) var screenshotDirectoryPath: String
+    @Published package private(set) var isWatching = false
+    @Published package private(set) var statusMessage = "Starting..."
+    @Published package private(set) var recentEvents: [String] = []
+    @Published package private(set) var accessibilityPermissionGranted = false
+    @Published package private(set) var screenRecordingPermissionGranted = false
 
     private let defaults: UserDefaults
-    private let watcher: ScreenshotWatcher
-    private let clipboardWatcher: ClipboardWatcher
-    private let clipboardService: ClipboardService
-    private let autoPasteService: CodexAutoPasteService
+    private let watcher: any ScreenshotWatching
+    private let clipboardWatcher: any ClipboardWatching
+    private let clipboardService: any ClipboardServicing
+    private let autoPasteService: any CodexAutoPasteServing
+    private let defaultScreenshotDirectoryProvider: (UserDefaults) -> String
     private var isClipboardWatcherRunning = false
 
-    init() {
-        defaults = .standard
-        watcher = ScreenshotWatcher()
-        clipboardWatcher = ClipboardWatcher()
-        clipboardService = ClipboardService()
-        autoPasteService = CodexAutoPasteService()
+    package init(
+        defaults: UserDefaults,
+        watcher: any ScreenshotWatching,
+        clipboardWatcher: any ClipboardWatching,
+        clipboardService: any ClipboardServicing,
+        autoPasteService: any CodexAutoPasteServing,
+        defaultScreenshotDirectoryProvider: @escaping (UserDefaults) -> String
+    ) {
+        self.defaults = defaults
+        self.watcher = watcher
+        self.clipboardWatcher = clipboardWatcher
+        self.clipboardService = clipboardService
+        self.autoPasteService = autoPasteService
+        self.defaultScreenshotDirectoryProvider = defaultScreenshotDirectoryProvider
 
         screenshotDirectoryPath = defaults.string(forKey: DefaultsKeys.screenshotDirectoryPath)
-            ?? Self.defaultScreenshotDirectoryPath()
+            ?? defaultScreenshotDirectoryProvider(defaults)
         bridgeEnabled = defaults.object(forKey: DefaultsKeys.bridgeEnabled) as? Bool ?? true
         autoPasteEnabled = defaults.object(forKey: DefaultsKeys.autoPasteEnabled) as? Bool ?? true
         listenClipboardImages = defaults.object(forKey: DefaultsKeys.listenClipboardImages) as? Bool ?? true
@@ -78,7 +87,20 @@ final class BridgeController: ObservableObject {
         }
     }
 
-    func chooseScreenshotFolder() {
+    package convenience init() {
+        self.init(
+            defaults: .standard,
+            watcher: ScreenshotWatcher(),
+            clipboardWatcher: ClipboardWatcher(),
+            clipboardService: ClipboardService(),
+            autoPasteService: CodexAutoPasteService(),
+            defaultScreenshotDirectoryProvider: { defaults in
+                BridgeController.defaultScreenshotDirectoryPath(defaults: defaults)
+            }
+        )
+    }
+
+    package func chooseScreenshotFolder() {
         let panel = NSOpenPanel()
         panel.prompt = "Choose"
         panel.canChooseFiles = false
@@ -101,7 +123,7 @@ final class BridgeController: ObservableObject {
         }
     }
 
-    func restartWatching() {
+    package func restartWatching() {
         guard bridgeEnabled else {
             addLog("Bridge is disabled. Enable it first.")
             return
@@ -110,7 +132,7 @@ final class BridgeController: ObservableObject {
         startWatching()
     }
 
-    func requestAccessibilityAccess() {
+    package func requestAccessibilityAccess() {
         let granted = autoPasteService.ensureAccessibilityPermission(prompt: true)
         refreshPermissionStatus()
         if granted {
@@ -120,7 +142,7 @@ final class BridgeController: ObservableObject {
         }
     }
 
-    func requestScreenRecordingAccess() {
+    package func requestScreenRecordingAccess() {
         let granted = autoPasteService.requestScreenRecordingPermission()
         refreshPermissionStatus()
         if granted {
@@ -130,7 +152,7 @@ final class BridgeController: ObservableObject {
         }
     }
 
-    func refreshPermissionStatus() {
+    package func refreshPermissionStatus() {
         accessibilityPermissionGranted = autoPasteService.hasAccessibilityPermission()
         screenRecordingPermissionGranted = autoPasteService.hasScreenRecordingPermission()
     }
@@ -196,7 +218,7 @@ final class BridgeController: ObservableObject {
         autoPasteIntoCodexIfEnabled(source: "file screenshot")
     }
 
-    private func handleClipboardImageEvent(_ event: ClipboardWatcher.ClipboardImageEvent) {
+    private func handleClipboardImageEvent(_ event: ClipboardWatchEvent) {
         guard bridgeEnabled, listenClipboardImages else {
             return
         }
@@ -261,14 +283,17 @@ final class BridgeController: ObservableObject {
         }
     }
 
-    private static func defaultScreenshotDirectoryPath() -> String {
-        if let domain = UserDefaults.standard.persistentDomain(forName: "com.apple.screencapture"),
+    package nonisolated static func defaultScreenshotDirectoryPath(
+        defaults: UserDefaults = .standard,
+        fileManager: FileManager = .default
+    ) -> String {
+        if let domain = defaults.persistentDomain(forName: "com.apple.screencapture"),
            let location = domain["location"] as? String,
            !location.isEmpty {
             return NSString(string: location).expandingTildeInPath
         }
 
-        return FileManager.default.homeDirectoryForCurrentUser
+        return fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Desktop", isDirectory: true)
             .path
     }

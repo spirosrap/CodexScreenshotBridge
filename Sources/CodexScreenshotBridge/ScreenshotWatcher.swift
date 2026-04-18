@@ -1,6 +1,6 @@
 import Foundation
 
-final class ScreenshotWatcher: @unchecked Sendable {
+final class ScreenshotWatcher: @unchecked Sendable, ScreenshotWatching {
     enum WatcherError: LocalizedError {
         case directoryMissing(String)
         case cannotOpenDirectory(String)
@@ -45,7 +45,7 @@ final class ScreenshotWatcher: @unchecked Sendable {
         }
 
         watchedDirectoryURL = standardizedDirectory
-        seenFileNames = Set((try? Self.listCandidateFiles(in: standardizedDirectory)
+        seenFileNames = Set((try? ScreenshotDirectoryScanner.listCandidateFiles(in: standardizedDirectory)
             .map(\.lastPathComponent)) ?? [])
 
         directoryFileDescriptor = open(standardizedDirectory.path, O_EVTONLY)
@@ -110,15 +110,11 @@ final class ScreenshotWatcher: @unchecked Sendable {
             return
         }
 
-        guard let candidates = try? Self.listCandidateFiles(in: watchedDirectoryURL) else {
+        guard let candidates = try? ScreenshotDirectoryScanner.listCandidateFiles(in: watchedDirectoryURL) else {
             return
         }
 
-        let sortedCandidates = candidates.sorted { lhs, rhs in
-            let lhsDate = (try? lhs.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
-            let rhsDate = (try? rhs.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
-            return lhsDate < rhsDate
-        }
+        let sortedCandidates = ScreenshotDirectoryScanner.sortCandidatesByCreationDate(candidates)
 
         for candidate in sortedCandidates {
             let fileName = candidate.lastPathComponent
@@ -128,59 +124,11 @@ final class ScreenshotWatcher: @unchecked Sendable {
 
             seenFileNames.insert(fileName)
 
-            guard Self.waitUntilReadable(candidate) else {
+            guard ScreenshotDirectoryScanner.waitUntilReadable(candidate) else {
                 continue
             }
 
             onNewScreenshot?(candidate)
         }
-    }
-
-    private static func listCandidateFiles(in directoryURL: URL) throws -> [URL] {
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .nameKey]
-        let options: FileManager.DirectoryEnumerationOptions = [.skipsHiddenFiles, .skipsPackageDescendants]
-
-        return try FileManager.default.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: Array(keys),
-            options: options
-        ).filter { url in
-            guard let values = try? url.resourceValues(forKeys: keys),
-                  values.isRegularFile == true else {
-                return false
-            }
-
-            return isLikelyScreenshotName(url.deletingPathExtension().lastPathComponent) &&
-                isSupportedImageExtension(url.pathExtension)
-        }
-    }
-
-    private static func isLikelyScreenshotName(_ name: String) -> Bool {
-        let lowered = name.lowercased()
-        return lowered.contains("screenshot") || lowered.contains("screen shot")
-    }
-
-    private static func isSupportedImageExtension(_ ext: String) -> Bool {
-        switch ext.lowercased() {
-        case "png", "jpg", "jpeg", "heic", "tiff", "pdf":
-            return true
-        default:
-            return false
-        }
-    }
-
-    private static func waitUntilReadable(_ url: URL) -> Bool {
-        for _ in 0..<8 {
-            if FileManager.default.isReadableFile(atPath: url.path),
-               let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-               let size = attributes[.size] as? NSNumber,
-               size.intValue > 0 {
-                return true
-            }
-
-            Thread.sleep(forTimeInterval: 0.08)
-        }
-
-        return FileManager.default.isReadableFile(atPath: url.path)
     }
 }

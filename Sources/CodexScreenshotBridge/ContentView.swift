@@ -1,10 +1,12 @@
 import AppKit
 import SwiftUI
 
-struct ContentView: View {
+package struct ContentView: View {
     @EnvironmentObject private var controller: BridgeController
 
-    var body: some View {
+    package init() {}
+
+    package var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Codex Screenshot Bridge")
                 .font(.headline)

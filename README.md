@@ -94,6 +94,12 @@ Build:
 swift build
 ```
 
+Run the automated test suite:
+
+```bash
+./scripts/run_tests.sh
+```
+
 Release build:
 
 ```bash

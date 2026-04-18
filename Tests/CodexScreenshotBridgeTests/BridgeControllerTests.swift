@@ -1,0 +1,226 @@
+import Foundation
+import CodexScreenshotBridgeCore
+
+enum BridgeControllerTests {
+    static let all: [CodexTestCase] = [
+        CodexTestCase(name: "BridgeController initializer starts watcher and refreshes permissions") {
+            try await MainActor.run {
+                let defaults = makeTestDefaults()
+                let watcher = FakeScreenshotWatcher()
+                let clipboardWatcher = FakeClipboardWatcher()
+                let clipboardService = FakeClipboardService()
+                let autoPasteService = FakeAutoPasteService()
+                autoPasteService.accessibilityPermissionGranted = true
+                autoPasteService.screenRecordingPermissionGranted = true
+
+                let controller = BridgeController(
+                    defaults: defaults,
+                    watcher: watcher,
+                    clipboardWatcher: clipboardWatcher,
+                    clipboardService: clipboardService,
+                    autoPasteService: autoPasteService,
+                    defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
+                )
+
+                try expect(watcher.startedDirectories.map(\.path) == ["/tmp/screenshots"], "Initializer should start screenshot watcher")
+                try expect(clipboardWatcher.startCallCount == 1, "Initializer should start clipboard watcher")
+                try expect(controller.isWatching, "Controller should report active watcher")
+                try expect(controller.accessibilityPermissionGranted, "Accessibility permission should refresh from auto-paste service")
+                try expect(controller.screenRecordingPermissionGranted, "Screen Recording permission should refresh from auto-paste service")
+                try expect(controller.recentEvents.contains(where: { $0.contains("Watching /tmp/screenshots.") }), "Screenshot watch log should be recorded")
+                try expect(controller.statusMessage == "Watching clipboard for screenshot copies.", "Clipboard watcher log should become the current status")
+            }
+        },
+        CodexTestCase(name: "BridgeController honors disabled bridge setting on init") {
+            try await MainActor.run {
+                let defaults = makeTestDefaults()
+                defaults.set(false, forKey: BridgeController.DefaultsKeys.bridgeEnabled)
+
+                let watcher = FakeScreenshotWatcher()
+                let clipboardWatcher = FakeClipboardWatcher()
+                let controller = BridgeController(
+                    defaults: defaults,
+                    watcher: watcher,
+                    clipboardWatcher: clipboardWatcher,
+                    clipboardService: FakeClipboardService(),
+                    autoPasteService: FakeAutoPasteService(),
+                    defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
+                )
+
+                try expect(watcher.startedDirectories.isEmpty, "Disabled bridge should not start screenshot watcher")
+                try expect(clipboardWatcher.startCallCount == 0, "Disabled bridge should not start clipboard watcher")
+                try expect(controller.statusMessage == "Bridge is disabled.", "Disabled bridge should log disabled state")
+            }
+        },
+        CodexTestCase(name: "BridgeController permission requests refresh state and log outcome") {
+            try await MainActor.run {
+                let parts = makeController()
+                let controller = parts.controller
+                let autoPasteService = parts.autoPasteService
+
+                autoPasteService.accessibilityPermissionGranted = false
+                controller.requestAccessibilityAccess()
+                try expect(!controller.accessibilityPermissionGranted, "Accessibility refresh should reflect service state")
+                try expect(controller.statusMessage.contains("Allow Accessibility"), "Accessibility failure should log instructions")
+
+                autoPasteService.requestScreenRecordingResult = true
+                controller.requestScreenRecordingAccess()
+                try expect(controller.screenRecordingPermissionGranted, "Screen Recording refresh should reflect granted state")
+                try expect(controller.statusMessage == "Screen Recording permission is enabled.", "Screen Recording success should log enabled message")
+            }
+        },
+        CodexTestCase(name: "BridgeController handles screenshot copy and auto-paste flow") {
+            let parts = await MainActor.run { makeController() }
+            await MainActor.run {
+                parts.controller.codexBundleIdentifier = "  com.example.codex  "
+                parts.clipboardService.nextChangeCount = 44
+                parts.watcher.emit(URL(fileURLWithPath: "/tmp/Screenshot 1.png"))
+            }
+            await drainAsyncTasks()
+
+            try await MainActor.run {
+                try expect(parts.clipboardService.copiedURLs == [URL(fileURLWithPath: "/tmp/Screenshot 1.png")], "Screenshot should be copied to clipboard service")
+                try expect(parts.clipboardWatcher.ignoredChangeCounts == [44], "Controller should ignore its own pasteboard write")
+                try expect(parts.autoPasteService.activateCalls == ["com.example.codex"], "Auto-paste should receive trimmed bundle identifier")
+                try expect(parts.controller.recentEvents.contains(where: { $0.contains("Copied Screenshot 1.png to clipboard.") }), "Copy log should be recorded")
+                try expect(parts.controller.recentEvents.contains(where: { $0.contains("Sent Cmd+V to Codex (file screenshot).") }), "Auto-paste log should be recorded")
+            }
+        },
+        CodexTestCase(name: "BridgeController logs screenshot copy failure without auto-paste") {
+            let parts = await MainActor.run { makeController() }
+            await MainActor.run {
+                parts.clipboardService.copyError = FakeLocalizedError(message: "copy failed")
+                parts.watcher.emit(URL(fileURLWithPath: "/tmp/Screenshot 2.png"))
+            }
+            await drainAsyncTasks()
+
+            try await MainActor.run {
+                try expect(parts.controller.statusMessage.contains("Copy failed: copy failed"), "Copy failure should be logged")
+                try expect(parts.autoPasteService.activateCalls.isEmpty, "Copy failure should skip auto-paste")
+            }
+        },
+        CodexTestCase(name: "BridgeController clipboard events paste only while listening is enabled") {
+            let parts = await MainActor.run { makeController() }
+            await MainActor.run {
+                parts.clipboardWatcher.emit(changeCount: 9, types: ["public.png", "public.tiff"])
+            }
+            await drainAsyncTasks()
+
+            try await MainActor.run {
+                try expect(parts.autoPasteService.activateCalls.count == 1, "Clipboard image should trigger one paste")
+                try expect(parts.controller.recentEvents.contains(where: {
+                    $0.contains("Detected clipboard image (public.png, public.tiff).")
+                }), "Clipboard detection should be logged")
+
+                parts.controller.listenClipboardImages = false
+            }
+            await drainAsyncTasks()
+
+            let previousCount = await MainActor.run { parts.autoPasteService.activateCalls.count }
+            await MainActor.run {
+                parts.clipboardWatcher.emit(changeCount: 10, types: ["public.png"])
+            }
+            await drainAsyncTasks()
+
+            try await MainActor.run {
+                try expect(previousCount == parts.autoPasteService.activateCalls.count, "Disabled clipboard listening should block further pastes")
+                try expect(parts.clipboardWatcher.stopCallCount == 1, "Disabling clipboard listening should stop watcher")
+                try expect(parts.controller.recentEvents.contains(where: { $0.contains("Clipboard watcher paused.") }), "Pause log should be recorded")
+            }
+        },
+        CodexTestCase(name: "BridgeController bridge toggle stops and restarts watchers") {
+            let parts = await MainActor.run { makeController() }
+            await MainActor.run {
+                parts.controller.bridgeEnabled = false
+            }
+            await drainAsyncTasks()
+
+            try await MainActor.run {
+                try expect(parts.watcher.stopCallCount == 1, "Disabling bridge should stop screenshot watcher")
+                try expect(parts.clipboardWatcher.stopCallCount == 1, "Disabling bridge should stop clipboard watcher")
+                try expect(!parts.controller.isWatching, "Controller should report stopped watcher")
+                try expect(parts.controller.statusMessage == "Bridge disabled.", "Disable action should log state")
+                parts.controller.bridgeEnabled = true
+            }
+            await drainAsyncTasks()
+
+            try await MainActor.run {
+                try expect(parts.watcher.startedDirectories.count == 2, "Re-enabling bridge should restart screenshot watcher")
+                try expect(parts.clipboardWatcher.startCallCount == 2, "Re-enabling bridge should restart clipboard watcher")
+                try expect(parts.controller.isWatching, "Controller should report active watcher again")
+                try expect(parts.controller.recentEvents.contains(where: { $0.contains("Bridge enabled.") }), "Enable log should be recorded")
+            }
+        },
+        CodexTestCase(name: "BridgeController restartWatching warns when bridge is disabled") {
+            try await MainActor.run {
+                let defaults = makeTestDefaults()
+                defaults.set(false, forKey: BridgeController.DefaultsKeys.bridgeEnabled)
+
+                let watcher = FakeScreenshotWatcher()
+                let clipboardWatcher = FakeClipboardWatcher()
+                let controller = BridgeController(
+                    defaults: defaults,
+                    watcher: watcher,
+                    clipboardWatcher: clipboardWatcher,
+                    clipboardService: FakeClipboardService(),
+                    autoPasteService: FakeAutoPasteService(),
+                    defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
+                )
+
+                controller.restartWatching()
+
+                try expect(controller.statusMessage == "Bridge is disabled. Enable it first.", "Restart should prompt user to enable bridge first")
+                try expect(watcher.startedDirectories.isEmpty, "Restart should not touch watcher while disabled")
+            }
+        },
+        CodexTestCase(name: "BridgeController caps recent events at fourteen entries") {
+            try await MainActor.run {
+                let parts = makeController()
+                parts.controller.autoPasteEnabled = false
+
+                for _ in 0..<20 {
+                    parts.controller.requestAccessibilityAccess()
+                }
+
+                try expect(parts.controller.recentEvents.count == 14, "Recent events should retain only the newest fourteen entries")
+            }
+        },
+        CodexTestCase(name: "BridgeController default screenshot directory respects capture location defaults") {
+            let defaults = makeTestDefaults()
+            defaults.setPersistentDomain(
+                ["location": "~/Screenshots"],
+                forName: "com.apple.screencapture"
+            )
+
+            let path = BridgeController.defaultScreenshotDirectoryPath(defaults: defaults)
+            try expect(path == NSString(string: "~/Screenshots").expandingTildeInPath, "Configured screenshot location should be expanded from defaults")
+        },
+    ]
+
+    @MainActor
+    private static func makeController() -> (
+        controller: BridgeController,
+        watcher: FakeScreenshotWatcher,
+        clipboardWatcher: FakeClipboardWatcher,
+        clipboardService: FakeClipboardService,
+        autoPasteService: FakeAutoPasteService
+    ) {
+        let watcher = FakeScreenshotWatcher()
+        let clipboardWatcher = FakeClipboardWatcher()
+        let clipboardService = FakeClipboardService()
+        let autoPasteService = FakeAutoPasteService()
+        autoPasteService.accessibilityPermissionGranted = true
+        autoPasteService.screenRecordingPermissionGranted = false
+
+        let controller = BridgeController(
+            defaults: makeTestDefaults(),
+            watcher: watcher,
+            clipboardWatcher: clipboardWatcher,
+            clipboardService: clipboardService,
+            autoPasteService: autoPasteService,
+            defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
+        )
+
+        return (controller, watcher, clipboardWatcher, clipboardService, autoPasteService)
+    }
+}

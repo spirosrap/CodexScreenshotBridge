@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import CodexScreenshotBridgeCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {

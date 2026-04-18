@@ -9,14 +9,29 @@ let package = Package(
         .macOS(.v13),
     ],
     products: [
+        .library(
+            name: "CodexScreenshotBridgeCore",
+            targets: ["CodexScreenshotBridgeCore"]
+        ),
         .executable(
             name: "CodexScreenshotBridge",
-            targets: ["CodexScreenshotBridge"]
+            targets: ["CodexScreenshotBridgeApp"]
         ),
     ],
     targets: [
+        .target(
+            name: "CodexScreenshotBridgeCore",
+            path: "Sources/CodexScreenshotBridge"
+        ),
         .executableTarget(
-            name: "CodexScreenshotBridge"
+            name: "CodexScreenshotBridgeApp",
+            dependencies: ["CodexScreenshotBridgeCore"],
+            path: "Sources/CodexScreenshotBridgeApp"
+        ),
+        .executableTarget(
+            name: "CodexScreenshotBridgeTestRunner",
+            dependencies: ["CodexScreenshotBridgeCore"],
+            path: "Tests/CodexScreenshotBridgeTests"
         ),
     ]
 )

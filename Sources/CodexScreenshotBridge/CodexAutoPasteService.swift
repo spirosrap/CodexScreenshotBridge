@@ -5,12 +5,7 @@ import ScreenCaptureKit
 import Vision
 
 @MainActor
-final class CodexAutoPasteService {
-    private enum ComposerLayout {
-        case conversation
-        case firstPrompt
-    }
-
+final class CodexAutoPasteService: CodexAutoPasteServing {
     private static let initialScreenMarkers = [
         "what should we",
         "think of a suitable starter task",
@@ -103,56 +98,25 @@ final class CodexAutoPasteService {
     private func findRunningCodex(bundleIdentifier: String?) -> NSRunningApplication? {
         let currentPID = ProcessInfo.processInfo.processIdentifier
         let ownBundleIdentifier = Bundle.main.bundleIdentifier
-        let runningApps = NSWorkspace.shared.runningApplications.filter { app in
-            guard app.processIdentifier != currentPID else {
-                return false
-            }
-
-            if let ownBundleIdentifier, app.bundleIdentifier == ownBundleIdentifier {
-                return false
-            }
-
-            // Ignore helper/process wrappers that cannot receive paste into UI.
-            if let bundle = app.bundleIdentifier?.lowercased() {
-                if bundle.hasPrefix("com.apple.") {
-                    return false
-                }
-                if bundle.contains("webkit") {
-                    return false
-                }
-            }
-
-            return true
+        let runningApps = NSWorkspace.shared.runningApplications
+        let descriptors = runningApps.map {
+            CodexRunningAppDescriptor(
+                processIdentifier: $0.processIdentifier,
+                bundleIdentifier: $0.bundleIdentifier,
+                localizedName: $0.localizedName
+            )
         }
 
-        if let bundleIdentifier, !bundleIdentifier.isEmpty {
-            return runningApps.first { $0.bundleIdentifier == bundleIdentifier }
+        guard let match = CodexAppMatcher.bestMatch(
+            bundleIdentifier: bundleIdentifier,
+            currentPID: currentPID,
+            ownBundleIdentifier: ownBundleIdentifier,
+            candidates: descriptors
+        ) else {
+            return nil
         }
 
-        if let exactCodexBundle = runningApps.first(where: { $0.bundleIdentifier == "com.openai.codex" }) {
-            return exactCodexBundle
-        }
-
-        if let exactChatGPTBundle = runningApps.first(where: { $0.bundleIdentifier == "com.openai.chat" }) {
-            return exactChatGPTBundle
-        }
-
-        if let exactNameMatch = runningApps.first(where: {
-            $0.localizedName?.caseInsensitiveCompare("Codex") == .orderedSame
-        }) {
-            return exactNameMatch
-        }
-
-        if let openAINameMatch = runningApps.first(where: {
-            ($0.localizedName ?? "").localizedCaseInsensitiveContains("chatgpt")
-        }) {
-            return openAINameMatch
-        }
-
-        return runningApps.first(where: {
-            ($0.localizedName ?? "").localizedCaseInsensitiveContains("codex") ||
-                ($0.bundleIdentifier ?? "").localizedCaseInsensitiveContains("codex")
-        })
+        return runningApps.first { $0.processIdentifier == match.processIdentifier }
     }
 
     private func openApplication(at url: URL) async throws -> NSRunningApplication {
@@ -178,16 +142,9 @@ final class CodexAutoPasteService {
 
     private func fallbackCodexAppURL() -> URL? {
         let fileManager = FileManager.default
-        let candidates = [
-            URL(fileURLWithPath: "/Applications/Codex.app"),
-            URL(fileURLWithPath: "/Applications/ChatGPT.app"),
-            fileManager.homeDirectoryForCurrentUser
-                .appendingPathComponent("Applications", isDirectory: true)
-                .appendingPathComponent("Codex.app", isDirectory: true),
-            fileManager.homeDirectoryForCurrentUser
-                .appendingPathComponent("Applications", isDirectory: true)
-                .appendingPathComponent("ChatGPT.app", isDirectory: true),
-        ]
+        let candidates = CodexAppMatcher.fallbackApplicationURLs(
+            homeDirectory: fileManager.homeDirectoryForCurrentUser
+        )
 
         return candidates.first(where: { fileManager.fileExists(atPath: $0.path) })
     }
@@ -295,7 +252,7 @@ final class CodexAutoPasteService {
         }
     }
 
-    private func reinforceComposerFocus(in app: NSRunningApplication, layout: ComposerLayout) async throws {
+    private func reinforceComposerFocus(in app: NSRunningApplication, layout: CodexComposerLayout) async throws {
         let delay: Duration = layout == .firstPrompt ? .milliseconds(140) : .milliseconds(80)
         try await Task.sleep(for: delay)
         await bringAppToFront(app)
@@ -312,7 +269,7 @@ final class CodexAutoPasteService {
         }
     }
 
-    private func composerLayout(for processID: pid_t) async -> ComposerLayout {
+    private func composerLayout(for processID: pid_t) async -> CodexComposerLayout {
         if await initialPromptScreenIsVisible(for: processID) {
             return .firstPrompt
         }
@@ -320,25 +277,11 @@ final class CodexAutoPasteService {
         return .conversation
     }
 
-    private func composerActivationPoints(for bounds: CGRect, layout: ComposerLayout) -> [CGPoint] {
-        switch layout {
-        case .conversation:
-            return makePoints(
-                in: bounds,
-                xFractions: [0.5],
-                yFractions: [0.91]
-            )
-        case .firstPrompt:
-            // Fresh projects use the centered "What should we work on?" composer.
-            return makePoints(
-                in: bounds,
-                xFractions: [0.42, 0.54, 0.66],
-                yFractions: [0.39, 0.43]
-            )
-        }
+    private func composerActivationPoints(for bounds: CGRect, layout: CodexComposerLayout) -> [CGPoint] {
+        ComposerPointCalculator.activationPoints(in: bounds, layout: layout)
     }
 
-    private func composerActivationPoints(in processID: pid_t, layout: ComposerLayout) -> [CGPoint] {
+    private func composerActivationPoints(in processID: pid_t, layout: CodexComposerLayout) -> [CGPoint] {
         guard let bounds = focusedWindowBounds(for: processID) else {
             return []
         }
@@ -346,46 +289,12 @@ final class CodexAutoPasteService {
         return composerActivationPoints(for: bounds, layout: layout)
     }
 
-    private func composerEditorFocusPoints(in processID: pid_t, layout: ComposerLayout) -> [CGPoint] {
+    private func composerEditorFocusPoints(in processID: pid_t, layout: CodexComposerLayout) -> [CGPoint] {
         guard let bounds = focusedWindowBounds(for: processID) else {
             return []
         }
 
-        switch layout {
-        case .conversation:
-            return composerActivationPoints(for: bounds, layout: layout)
-        case .firstPrompt:
-            // After an image is pasted into the startup composer, the editor line
-            // sits farther left than the empty-state activation area.
-            return makePoints(
-                in: bounds,
-                xFractions: [0.10, 0.14],
-                yFractions: [0.398]
-            )
-        }
-    }
-
-    private func makePoints(
-        in bounds: CGRect,
-        xFractions: [CGFloat],
-        yFractions: [CGFloat]
-    ) -> [CGPoint] {
-        var points: [CGPoint] = []
-        points.reserveCapacity(xFractions.count * yFractions.count)
-
-        for yFraction in yFractions {
-            let y = bounds.minY + (bounds.height * yFraction)
-            for xFraction in xFractions {
-                points.append(
-                    CGPoint(
-                        x: bounds.minX + (bounds.width * xFraction),
-                        y: y
-                    )
-                )
-            }
-        }
-
-        return points
+        return ComposerPointCalculator.editorFocusPoints(in: bounds, layout: layout)
     }
 
     private func focusedWindowBounds(for processID: pid_t) -> CGRect? {

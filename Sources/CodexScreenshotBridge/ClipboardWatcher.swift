@@ -1,25 +1,18 @@
 import AppKit
 import Foundation
 
-final class ClipboardWatcher: @unchecked Sendable {
-    struct ClipboardImageEvent {
-        let changeCount: Int
-        let types: [String]
-    }
+final class ClipboardWatcher: @unchecked Sendable, ClipboardWatching {
+    package typealias ClipboardImageEvent = ClipboardWatchEvent
 
     var onClipboardImage: ((ClipboardImageEvent) -> Void)?
 
     private var timer: Timer?
-    private var lastChangeCount = NSPasteboard.general.changeCount
-    private var ignoredChangeCounts: Set<Int> = []
-    private var pendingChangeCount: Int?
-    private var pendingRetryCount = 0
-    private let maxImageResolutionRetries = 14
+    private var state = ClipboardWatcherState(initialChangeCount: NSPasteboard.general.changeCount)
 
     func start() {
         stop()
 
-        lastChangeCount = NSPasteboard.general.changeCount
+        state = ClipboardWatcherState(initialChangeCount: NSPasteboard.general.changeCount)
         let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             self?.pollPasteboard()
         }
@@ -30,50 +23,23 @@ final class ClipboardWatcher: @unchecked Sendable {
     func stop() {
         timer?.invalidate()
         timer = nil
-        ignoredChangeCounts.removeAll()
-        pendingChangeCount = nil
-        pendingRetryCount = 0
-        lastChangeCount = NSPasteboard.general.changeCount
+        state.reset(currentChangeCount: NSPasteboard.general.changeCount)
     }
 
     func ignore(changeCount: Int) {
-        ignoredChangeCounts.insert(changeCount)
+        state.ignore(changeCount: changeCount)
     }
 
     private func pollPasteboard() {
         let pasteboard = NSPasteboard.general
-        let currentChangeCount = pasteboard.changeCount
+        let event = state.processPoll(
+            currentChangeCount: pasteboard.changeCount,
+            hasImage: NSImage(pasteboard: pasteboard) != nil,
+            types: (pasteboard.types ?? []).map(\.rawValue)
+        )
 
-        if currentChangeCount != lastChangeCount {
-            lastChangeCount = currentChangeCount
-            pendingChangeCount = currentChangeCount
-            pendingRetryCount = 0
+        if let event {
+            onClipboardImage?(event)
         }
-
-        guard let changeCount = pendingChangeCount else {
-            return
-        }
-
-        if ignoredChangeCounts.remove(changeCount) != nil {
-            pendingChangeCount = nil
-            pendingRetryCount = 0
-            return
-        }
-
-        guard NSImage(pasteboard: pasteboard) != nil else {
-            if pendingRetryCount < maxImageResolutionRetries {
-                pendingRetryCount += 1
-            } else {
-                pendingChangeCount = nil
-                pendingRetryCount = 0
-            }
-            return
-        }
-
-        let types = (pasteboard.types ?? []).map(\.rawValue)
-        let event = ClipboardImageEvent(changeCount: changeCount, types: types)
-        onClipboardImage?(event)
-        pendingChangeCount = nil
-        pendingRetryCount = 0
     }
 }
