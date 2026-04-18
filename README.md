@@ -6,7 +6,9 @@ It supports both screenshot styles:
 - file-based screenshots (saved to disk)
 - clipboard-only screenshots (copy shortcut flow)
 
-![Codex Screenshot Bridge demo](assets/codex-screenshot-bridge-demo.png)
+![Codex Screenshot Bridge updated UI](assets/codex-screenshot-bridge-permission-panel.png)
+
+Current menu-bar window with the built-in permission status panel.
 
 ## Features
 
