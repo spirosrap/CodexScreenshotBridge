@@ -17,6 +17,7 @@ It supports both screenshot styles:
 - Handles both the fresh-project welcome composer and the normal conversation composer
 - Detects the initial Codex screen with a one-shot window snapshot plus OCR of the heading region
 - Optional custom Codex bundle ID if app auto-detection is unreliable
+- Built-in permission status panel for Accessibility and Screen Recording
 - Small in-app event log for troubleshooting
 
 ## Requirements
@@ -38,6 +39,7 @@ Then:
 2. Enable `Bridge Enabled`.
 3. Enable `Auto-paste into Codex`.
 4. Enable `Handle clipboard screenshot shortcut` if you use clipboard screenshot shortcuts.
+5. Use the in-app permission actions if Accessibility or Screen Recording is missing.
 
 ## Package As .app
 
@@ -65,6 +67,8 @@ For reliable detection of the initial Codex screen, allow Screen Recording:
 2. Enable `CodexScreenshotBridge` (or Terminal/Xcode if running from source).
 
 This is used only to capture a single still image of the Codex window during auto-paste so the app can tell whether Codex is showing the initial centered composer or the normal conversation composer. It is not a continuous recording or video stream.
+
+The menu-bar window also shows the current status for both permissions and includes request/refresh actions for quick troubleshooting.
 
 ## Configuration Notes
 

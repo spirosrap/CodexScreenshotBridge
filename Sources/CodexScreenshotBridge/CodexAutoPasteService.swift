@@ -43,6 +43,18 @@ final class CodexAutoPasteService {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    func hasAccessibilityPermission() -> Bool {
+        ensureAccessibilityPermission(prompt: false)
+    }
+
+    func hasScreenRecordingPermission() -> Bool {
+        CGPreflightScreenCaptureAccess()
+    }
+
+    func requestScreenRecordingPermission() -> Bool {
+        hasScreenRecordingPermission() || CGRequestScreenCaptureAccess()
+    }
+
     private let pasteKey: CGKeyCode = 9
     private let probeTextKey: CGKeyCode = 7 // x
     private let backspaceKey: CGKeyCode = 51

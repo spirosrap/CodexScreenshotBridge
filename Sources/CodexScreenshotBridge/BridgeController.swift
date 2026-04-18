@@ -42,6 +42,8 @@ final class BridgeController: ObservableObject {
     @Published private(set) var isWatching = false
     @Published private(set) var statusMessage = "Starting..."
     @Published private(set) var recentEvents: [String] = []
+    @Published private(set) var accessibilityPermissionGranted = false
+    @Published private(set) var screenRecordingPermissionGranted = false
 
     private let defaults: UserDefaults
     private let watcher: ScreenshotWatcher
@@ -66,6 +68,7 @@ final class BridgeController: ObservableObject {
 
         configureWatcherCallback()
         configureClipboardWatcherCallback()
+        refreshPermissionStatus()
 
         if bridgeEnabled {
             startWatching()
@@ -109,11 +112,27 @@ final class BridgeController: ObservableObject {
 
     func requestAccessibilityAccess() {
         let granted = autoPasteService.ensureAccessibilityPermission(prompt: true)
+        refreshPermissionStatus()
         if granted {
             addLog("Accessibility permission is enabled.")
         } else {
             addLog("Allow Accessibility for this app to enable auto-paste.")
         }
+    }
+
+    func requestScreenRecordingAccess() {
+        let granted = autoPasteService.requestScreenRecordingPermission()
+        refreshPermissionStatus()
+        if granted {
+            addLog("Screen Recording permission is enabled.")
+        } else {
+            addLog("Allow Screen Recording for reliable startup-screen detection.")
+        }
+    }
+
+    func refreshPermissionStatus() {
+        accessibilityPermissionGranted = autoPasteService.hasAccessibilityPermission()
+        screenRecordingPermissionGranted = autoPasteService.hasScreenRecordingPermission()
     }
 
     private func bridgeEnabledDidChange() {
