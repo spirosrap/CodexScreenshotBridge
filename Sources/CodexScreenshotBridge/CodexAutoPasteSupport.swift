@@ -101,8 +101,8 @@ package enum ComposerPointCalculator {
         case .firstPrompt:
             return makePoints(
                 in: bounds,
-                xFractions: [0.42, 0.54, 0.66],
-                yFractions: [0.39, 0.43]
+                xFractions: [0.14, 0.24, 0.40],
+                yFractions: [0.35, 0.37]
             )
         }
     }
@@ -114,8 +114,8 @@ package enum ComposerPointCalculator {
         case .firstPrompt:
             return makePoints(
                 in: bounds,
-                xFractions: [0.10, 0.14],
-                yFractions: [0.398]
+                xFractions: [0.14, 0.24],
+                yFractions: [0.355]
             )
         }
     }
@@ -145,7 +145,7 @@ package enum ComposerPointCalculator {
 }
 
 package enum CodexWindowCaptureSizer {
-    package static let defaultMaxDimension: CGFloat = 1_200
+    package static let defaultMaxDimension: CGFloat = 640
 
     package static func outputSize(
         for frame: CGRect,

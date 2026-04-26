@@ -73,28 +73,28 @@ enum CodexAutoPasteSupportTests {
             let focusPoints = ComposerPointCalculator.editorFocusPoints(in: bounds, layout: .firstPrompt)
 
             try expect(activationPoints == [
-                CGPoint(x: 420, y: 195),
-                CGPoint(x: 540, y: 195),
-                CGPoint(x: 660, y: 195),
-                CGPoint(x: 420, y: 215),
-                CGPoint(x: 540, y: 215),
-                CGPoint(x: 660, y: 215),
+                CGPoint(x: 140, y: 175),
+                CGPoint(x: 240, y: 175),
+                CGPoint(x: 400, y: 175),
+                CGPoint(x: 140, y: 185),
+                CGPoint(x: 240, y: 185),
+                CGPoint(x: 400, y: 185),
             ], "First prompt activation points should span the centered composer")
-            try expect(focusPoints == [CGPoint(x: 100, y: 199), CGPoint(x: 140, y: 199)], "First prompt focus points should target the editor line")
+            try expect(focusPoints == [CGPoint(x: 140, y: 177.5), CGPoint(x: 240, y: 177.5)], "First prompt focus points should target the editor line")
         },
         CodexTestCase(name: "CodexWindowCaptureSizer downsizes large windows for OCR") {
             let size = CodexWindowCaptureSizer.outputSize(
                 for: CGRect(x: 0, y: 0, width: 2400, height: 1600)
             )
 
-            try expect(size == CGSize(width: 1200, height: 800), "Large capture should preserve aspect ratio under the max dimension")
+            try expect(size == CGSize(width: 640, height: 427), "Large capture should preserve aspect ratio under the max dimension")
         },
         CodexTestCase(name: "CodexWindowCaptureSizer keeps small windows at native size") {
             let size = CodexWindowCaptureSizer.outputSize(
-                for: CGRect(x: 0, y: 0, width: 800, height: 500)
+                for: CGRect(x: 0, y: 0, width: 500, height: 300)
             )
 
-            try expect(size == CGSize(width: 800, height: 500), "Small capture should not be upscaled")
+            try expect(size == CGSize(width: 500, height: 300), "Small capture should not be upscaled")
         },
     ]
 }

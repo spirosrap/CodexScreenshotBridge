@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import ScreenCaptureKit
 import Vision
 
 @MainActor
@@ -50,9 +51,12 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
     }
 
     private let pasteKey: CGKeyCode = 9
-    private let conversationLayoutCacheLifetime: TimeInterval = 180
+    private let conversationLayoutCacheLifetime: TimeInterval = 0
     private let firstPromptLayoutCacheLifetime: TimeInterval = 12
+    private let postStartupConversationCooldown: TimeInterval = 45
     private var cachedComposerLayout: CachedComposerLayout?
+    private var startupFallbackConsumedProcessID: pid_t?
+    private var forceConversationLayoutUntil: Date?
 
     func activateCodexAndPaste(
         codexBundleIdentifier: String?,
@@ -116,16 +120,40 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
         }
 
         let layout = await composerLayout(for: runningApp.processIdentifier)
-        timing.mark("layout")
+        timing.mark(layout == .firstPrompt ? "layout-startup" : "layout-conversation")
+        var usedStartupComposerPath = layout == .firstPrompt
 
         clickPoints(
             composerActivationPoints(in: runningApp.processIdentifier, layout: layout)
         )
-        try await Task.sleep(for: .milliseconds(25))
+        try await Task.sleep(for: .milliseconds(18))
         timing.mark("focus")
+
+        if layout == .firstPrompt {
+            clickPoints(
+                composerEditorFocusPoints(in: runningApp.processIdentifier, layout: layout)
+            )
+            try await Task.sleep(for: .milliseconds(60))
+            timing.mark("startup-editor")
+        } else if startupFallbackIsAvailable(for: runningApp.processIdentifier),
+                  focusedElementKind(expectedPID: runningApp.processIdentifier, allowWebArea: true) != .textLike {
+            clickPoints(
+                composerActivationPoints(in: runningApp.processIdentifier, layout: .firstPrompt)
+            )
+            try await Task.sleep(for: .milliseconds(18))
+            clickPoints(
+                composerEditorFocusPoints(in: runningApp.processIdentifier, layout: .firstPrompt)
+            )
+            try await Task.sleep(for: .milliseconds(60))
+            usedStartupComposerPath = true
+            timing.mark("startup-fallback")
+        }
 
         try sendCommandVGlobal()
         timing.mark("paste-detected")
+        if usedStartupComposerPath {
+            markStartupComposerPathUsed(for: runningApp.processIdentifier)
+        }
         return timing.report()
     }
 
@@ -370,6 +398,14 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
         let focusedBounds = focusedWindowBounds(for: processID)
         let now = Date()
 
+        if let forceConversationLayoutUntil {
+            if now < forceConversationLayoutUntil {
+                return .conversation
+            }
+
+            self.forceConversationLayoutUntil = nil
+        }
+
         if let focusedBounds,
            let cachedComposerLayout,
            cachedComposerLayout.matches(
@@ -398,6 +434,16 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
         }
 
         return layout
+    }
+
+    private func startupFallbackIsAvailable(for processID: pid_t) -> Bool {
+        startupFallbackConsumedProcessID != processID
+    }
+
+    private func markStartupComposerPathUsed(for processID: pid_t) {
+        startupFallbackConsumedProcessID = processID
+        forceConversationLayoutUntil = Date().addingTimeInterval(postStartupConversationCooldown)
+        cachedComposerLayout = nil
     }
 
     private func cacheLifetime(for layout: CodexComposerLayout) -> TimeInterval {
@@ -458,13 +504,17 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
     }
 
     private func initialPromptScreenIsVisible(for processID: pid_t, focusedBounds: CGRect?) async -> Bool {
+        guard #available(macOS 14.0, *) else {
+            return false
+        }
+
         guard CGPreflightScreenCaptureAccess() else {
             return false
         }
 
         do {
             guard let focusedBounds,
-                  let image = try captureFocusedWindowImage(for: processID, focusedBounds: focusedBounds),
+                  let image = try await captureFocusedWindowImage(for: processID, focusedBounds: focusedBounds),
                   let recognizedText = recognizeInitialScreenText(in: image) else {
                 return false
             }
@@ -476,32 +526,16 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
         }
     }
 
-    private func captureFocusedWindowImage(for processID: pid_t, focusedBounds: CGRect) throws -> CGImage? {
-        guard let windowInfo = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements],
-            kCGNullWindowID
-        ) as? [[String: Any]] else {
-            return nil
-        }
+    @available(macOS 14.0, *)
+    private func captureFocusedWindowImage(for processID: pid_t, focusedBounds: CGRect) async throws -> CGImage? {
+        let shareableContent = try await SCShareableContent.excludingDesktopWindows(
+            false,
+            onScreenWindowsOnly: true
+        )
 
-        let candidates = windowInfo.compactMap { info -> WindowCaptureCandidate? in
-            guard let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t,
-                  ownerPID == processID,
-                  let layer = info[kCGWindowLayer as String] as? Int,
-                  layer == 0,
-                  let windowNumber = info[kCGWindowNumber as String] as? CGWindowID,
-                  let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary else {
-                return nil
-            }
-
-            var frame = CGRect.null
-            guard CGRectMakeWithDictionaryRepresentation(boundsDictionary as CFDictionary, &frame),
-                  !frame.isNull,
-                  !frame.isEmpty else {
-                return nil
-            }
-
-            return WindowCaptureCandidate(windowID: windowNumber, frame: frame)
+        let candidates = shareableContent.windows.filter { window in
+            window.owningApplication?.processID == processID &&
+                window.windowLayer == 0
         }
 
         guard let window = candidates.min(by: { lhs, rhs in
@@ -511,12 +545,28 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
             return nil
         }
 
-        return CGWindowListCreateImage(
-            .null,
-            .optionIncludingWindow,
-            window.windowID,
-            [.boundsIgnoreFraming, .bestResolution]
-        )
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let configuration = SCStreamConfiguration()
+        let outputSize = CodexWindowCaptureSizer.outputSize(for: window.frame)
+        configuration.width = Int(outputSize.width)
+        configuration.height = Int(outputSize.height)
+        configuration.scalesToFit = true
+
+        return try await withCheckedThrowingContinuation { continuation in
+            SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: configuration
+            ) { image, error in
+                if let image {
+                    continuation.resume(returning: image)
+                    return
+                }
+
+                continuation.resume(
+                    throwing: error ?? AutoPasteError.codexNotFound
+                )
+            }
+        }
     }
 
     private func windowMatchScore(_ candidate: CGRect, target: CGRect) -> CGFloat {
@@ -531,7 +581,7 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
         request.recognitionLevel = .fast
         request.usesLanguageCorrection = false
         request.recognitionLanguages = ["en-US"]
-        request.regionOfInterest = CGRect(x: 0.30, y: 0.52, width: 0.68, height: 0.22)
+        request.regionOfInterest = CGRect(x: 0.08, y: 0.18, width: 0.84, height: 0.72)
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do {
@@ -567,11 +617,6 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
                 now.timeIntervalSince(createdAt) <= lifetime &&
                 self.focusedBounds.isApproximatelyEqual(to: focusedBounds, tolerance: 2)
         }
-    }
-
-    private struct WindowCaptureCandidate {
-        let windowID: CGWindowID
-        let frame: CGRect
     }
 
     private final class AutoPasteTimingRecorder {
