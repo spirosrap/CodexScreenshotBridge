@@ -15,6 +15,7 @@ Current menu-bar window with the built-in permission status panel.
 - Menu-bar app (`LSUIElement`) with instant enable/disable toggle
 - Watches screenshot folder for new files and pastes the screenshot file URL
 - Watches clipboard for screenshot image captures
+- Detects and disables the macOS screenshot floating thumbnail delay
 - Optional auto-focus Codex + send `Cmd+V`
 - Fast path targets the normal conversation composer without taking a window screenshot first
 - Optional startup fallback detector handles the fresh-project welcome composer after the normal composer fast path misses; it is off by default for faster normal conversation pastes
@@ -78,10 +79,12 @@ The menu-bar window also shows the current status for both permissions and inclu
 - Default screenshot folder is read from `com.apple.screencapture location` and falls back to `~/Desktop`.
 - Filename-based detection currently looks for names containing `Screenshot` or `Screen Shot`.
 - Clipboard screenshot detection is independent from file watching and works for copy shortcuts.
+- File-based screenshots can be delayed by the macOS floating thumbnail. Use `Disable Floating Thumbnail` in the app to make saved screenshots appear in the watched folder immediately.
 
 ## Troubleshooting
 
 - Nothing pastes: verify Accessibility permission and keep Codex running.
+- File screenshots paste several seconds late: disable the macOS floating thumbnail from the app's `Screenshot Speed` section.
 - Initial screen does not paste: verify Screen Recording permission and enable `Startup-screen detector`.
 - Initial screen still misses after permission is granted: make sure you are on a current build from `main`, which detects the centered startup composer before clicking.
 - App cannot find Codex: set `Codex bundle ID` in the app menu.

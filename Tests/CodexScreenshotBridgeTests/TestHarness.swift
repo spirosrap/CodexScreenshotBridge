@@ -168,6 +168,25 @@ final class FakeScreenshotCaptureService: ScreenshotCaptureServicing {
     }
 }
 
+final class FakeScreenshotSystemSettingsService: ScreenshotSystemSettingsServicing {
+    var state: ScreenshotFloatingThumbnailState = .enabled
+    var disableCallCount = 0
+    var disableError: Error?
+
+    func floatingThumbnailState() -> ScreenshotFloatingThumbnailState {
+        state
+    }
+
+    func disableFloatingThumbnail() throws {
+        disableCallCount += 1
+        if let disableError {
+            throw disableError
+        }
+
+        state = .disabled
+    }
+}
+
 @MainActor
 final class FakeAutoPasteService: CodexAutoPasteServing {
     var accessibilityPermissionGranted = true

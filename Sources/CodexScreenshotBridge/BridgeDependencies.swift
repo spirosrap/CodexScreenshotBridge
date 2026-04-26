@@ -59,6 +59,17 @@ package struct CodexAutoPasteReport: Equatable {
     }
 }
 
+package enum ScreenshotFloatingThumbnailState: Equatable {
+    case enabled
+    case disabled
+    case unknown
+}
+
+package protocol ScreenshotSystemSettingsServicing: AnyObject {
+    func floatingThumbnailState() -> ScreenshotFloatingThumbnailState
+    func disableFloatingThumbnail() throws
+}
+
 @MainActor
 package protocol CodexAutoPasteServing: AnyObject {
     func ensureAccessibilityPermission(prompt: Bool) -> Bool

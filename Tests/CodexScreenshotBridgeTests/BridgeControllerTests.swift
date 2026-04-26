@@ -19,6 +19,7 @@ enum BridgeControllerTests {
                     clipboardWatcher: clipboardWatcher,
                     clipboardService: clipboardService,
                     screenshotCaptureService: FakeScreenshotCaptureService(),
+                    screenshotSystemSettingsService: FakeScreenshotSystemSettingsService(),
                     autoPasteService: autoPasteService,
                     defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
                 )
@@ -28,6 +29,7 @@ enum BridgeControllerTests {
                 try expect(controller.isWatching, "Controller should report active watcher")
                 try expect(controller.accessibilityPermissionGranted, "Accessibility permission should refresh from auto-paste service")
                 try expect(controller.screenRecordingPermissionGranted, "Screen Recording permission should refresh from auto-paste service")
+                try expect(controller.screenshotFloatingThumbnailState == .enabled, "Screenshot system settings should refresh on init")
                 try expect(controller.recentEvents.contains(where: { $0.contains("Watching /tmp/screenshots.") }), "Screenshot watch log should be recorded")
                 try expect(controller.statusMessage == "Watching clipboard for screenshot copies.", "Clipboard watcher log should become the current status")
             }
@@ -45,6 +47,7 @@ enum BridgeControllerTests {
                     clipboardWatcher: clipboardWatcher,
                     clipboardService: FakeClipboardService(),
                     screenshotCaptureService: FakeScreenshotCaptureService(),
+                    screenshotSystemSettingsService: FakeScreenshotSystemSettingsService(),
                     autoPasteService: FakeAutoPasteService(),
                     defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
                 )
@@ -69,6 +72,28 @@ enum BridgeControllerTests {
                 controller.requestScreenRecordingAccess()
                 try expect(controller.screenRecordingPermissionGranted, "Screen Recording refresh should reflect granted state")
                 try expect(controller.statusMessage == "Screen Recording permission is enabled.", "Screen Recording success should log enabled message")
+            }
+        },
+        CodexTestCase(name: "BridgeController disables screenshot floating thumbnail and refreshes state") {
+            try await MainActor.run {
+                let parts = makeController()
+
+                parts.controller.disableScreenshotFloatingThumbnail()
+
+                try expect(parts.screenshotSystemSettingsService.disableCallCount == 1, "Disable action should update screenshot system settings")
+                try expect(parts.controller.screenshotFloatingThumbnailState == .disabled, "Disable action should refresh screenshot system settings")
+                try expect(parts.controller.statusMessage == "Disabled macOS screenshot floating thumbnail.", "Disable action should log success")
+            }
+        },
+        CodexTestCase(name: "BridgeController logs screenshot floating thumbnail disable failure") {
+            try await MainActor.run {
+                let parts = makeController()
+                parts.screenshotSystemSettingsService.disableError = FakeLocalizedError(message: "settings failed")
+
+                parts.controller.disableScreenshotFloatingThumbnail()
+
+                try expect(parts.controller.screenshotFloatingThumbnailState == .enabled, "Failure should leave refreshed state visible")
+                try expect(parts.controller.statusMessage.contains("settings failed"), "Failure should log settings error")
             }
         },
         CodexTestCase(name: "BridgeController handles screenshot copy and auto-paste flow") {
@@ -208,6 +233,7 @@ enum BridgeControllerTests {
                     clipboardWatcher: clipboardWatcher,
                     clipboardService: FakeClipboardService(),
                     screenshotCaptureService: FakeScreenshotCaptureService(),
+                    screenshotSystemSettingsService: FakeScreenshotSystemSettingsService(),
                     autoPasteService: FakeAutoPasteService(),
                     defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
                 )
@@ -288,12 +314,14 @@ enum BridgeControllerTests {
         clipboardWatcher: FakeClipboardWatcher,
         clipboardService: FakeClipboardService,
         screenshotCaptureService: FakeScreenshotCaptureService,
+        screenshotSystemSettingsService: FakeScreenshotSystemSettingsService,
         autoPasteService: FakeAutoPasteService
     ) {
         let watcher = FakeScreenshotWatcher()
         let clipboardWatcher = FakeClipboardWatcher()
         let clipboardService = FakeClipboardService()
         let screenshotCaptureService = FakeScreenshotCaptureService()
+        let screenshotSystemSettingsService = FakeScreenshotSystemSettingsService()
         let autoPasteService = FakeAutoPasteService()
         autoPasteService.accessibilityPermissionGranted = true
         autoPasteService.screenRecordingPermissionGranted = false
@@ -304,10 +332,11 @@ enum BridgeControllerTests {
             clipboardWatcher: clipboardWatcher,
             clipboardService: clipboardService,
             screenshotCaptureService: screenshotCaptureService,
+            screenshotSystemSettingsService: screenshotSystemSettingsService,
             autoPasteService: autoPasteService,
             defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
         )
 
-        return (controller, watcher, clipboardWatcher, clipboardService, screenshotCaptureService, autoPasteService)
+        return (controller, watcher, clipboardWatcher, clipboardService, screenshotCaptureService, screenshotSystemSettingsService, autoPasteService)
     }
 }

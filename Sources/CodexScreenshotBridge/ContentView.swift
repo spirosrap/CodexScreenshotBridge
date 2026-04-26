@@ -54,6 +54,8 @@ package struct ContentView: View {
                 .disabled(!controller.bridgeEnabled)
             }
 
+            screenshotSpeedSection
+
             VStack(alignment: .leading, spacing: 4) {
                 TextField("Codex bundle ID (optional)", text: $controller.codexBundleIdentifier)
                     .textFieldStyle(.roundedBorder)
@@ -135,6 +137,56 @@ package struct ContentView: View {
             Text("Screen Recording is used only for startup-screen detection.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var screenshotSpeedSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+
+            Text("Screenshot Speed")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Text("Floating Thumbnail")
+                    .font(.caption)
+                Spacer()
+                Text(floatingThumbnailStatusText)
+                    .font(.caption2)
+                    .foregroundStyle(floatingThumbnailStatusColor)
+            }
+
+            HStack(spacing: 8) {
+                Button("Disable Floating Thumbnail") {
+                    controller.disableScreenshotFloatingThumbnail()
+                }
+                .disabled(controller.screenshotFloatingThumbnailState == .disabled)
+
+                Button("Refresh") {
+                    controller.refreshScreenshotSystemSettings()
+                }
+            }
+        }
+    }
+
+    private var floatingThumbnailStatusText: String {
+        switch controller.screenshotFloatingThumbnailState {
+        case .enabled:
+            return "Enabled"
+        case .disabled:
+            return "Disabled"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+
+    private var floatingThumbnailStatusColor: Color {
+        switch controller.screenshotFloatingThumbnailState {
+        case .disabled:
+            return .green
+        case .enabled, .unknown:
+            return .secondary
         }
     }
 

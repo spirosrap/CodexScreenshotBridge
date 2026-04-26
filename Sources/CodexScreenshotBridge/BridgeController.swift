@@ -51,12 +51,14 @@ package final class BridgeController: ObservableObject {
     @Published package private(set) var recentEvents: [String] = []
     @Published package private(set) var accessibilityPermissionGranted = false
     @Published package private(set) var screenRecordingPermissionGranted = false
+    @Published package private(set) var screenshotFloatingThumbnailState: ScreenshotFloatingThumbnailState = .unknown
 
     private let defaults: UserDefaults
     private let watcher: any ScreenshotWatching
     private let clipboardWatcher: any ClipboardWatching
     private let clipboardService: any ClipboardServicing
     private let screenshotCaptureService: any ScreenshotCaptureServicing
+    private let screenshotSystemSettingsService: any ScreenshotSystemSettingsServicing
     private let autoPasteService: any CodexAutoPasteServing
     private let defaultScreenshotDirectoryProvider: (UserDefaults) -> String
     private var isClipboardWatcherRunning = false
@@ -67,6 +69,7 @@ package final class BridgeController: ObservableObject {
         clipboardWatcher: any ClipboardWatching,
         clipboardService: any ClipboardServicing,
         screenshotCaptureService: any ScreenshotCaptureServicing,
+        screenshotSystemSettingsService: any ScreenshotSystemSettingsServicing,
         autoPasteService: any CodexAutoPasteServing,
         defaultScreenshotDirectoryProvider: @escaping (UserDefaults) -> String
     ) {
@@ -75,6 +78,7 @@ package final class BridgeController: ObservableObject {
         self.clipboardWatcher = clipboardWatcher
         self.clipboardService = clipboardService
         self.screenshotCaptureService = screenshotCaptureService
+        self.screenshotSystemSettingsService = screenshotSystemSettingsService
         self.autoPasteService = autoPasteService
         self.defaultScreenshotDirectoryProvider = defaultScreenshotDirectoryProvider
 
@@ -89,6 +93,7 @@ package final class BridgeController: ObservableObject {
         configureWatcherCallback()
         configureClipboardWatcherCallback()
         refreshPermissionStatus()
+        refreshScreenshotSystemSettings()
 
         if bridgeEnabled {
             startWatching()
@@ -105,6 +110,7 @@ package final class BridgeController: ObservableObject {
             clipboardWatcher: ClipboardWatcher(),
             clipboardService: ClipboardService(),
             screenshotCaptureService: ScreenshotCaptureService(),
+            screenshotSystemSettingsService: ScreenshotSystemSettingsService(),
             autoPasteService: CodexAutoPasteService(),
             defaultScreenshotDirectoryProvider: { defaults in
                 BridgeController.defaultScreenshotDirectoryPath(defaults: defaults)
@@ -196,6 +202,21 @@ package final class BridgeController: ObservableObject {
     package func refreshPermissionStatus() {
         accessibilityPermissionGranted = autoPasteService.hasAccessibilityPermission()
         screenRecordingPermissionGranted = autoPasteService.hasScreenRecordingPermission()
+    }
+
+    package func refreshScreenshotSystemSettings() {
+        screenshotFloatingThumbnailState = screenshotSystemSettingsService.floatingThumbnailState()
+    }
+
+    package func disableScreenshotFloatingThumbnail() {
+        do {
+            try screenshotSystemSettingsService.disableFloatingThumbnail()
+            refreshScreenshotSystemSettings()
+            addLog("Disabled macOS screenshot floating thumbnail.")
+        } catch {
+            refreshScreenshotSystemSettings()
+            addLog("Could not disable screenshot floating thumbnail: \(error.localizedDescription)")
+        }
     }
 
     private func bridgeEnabledDidChange() {
