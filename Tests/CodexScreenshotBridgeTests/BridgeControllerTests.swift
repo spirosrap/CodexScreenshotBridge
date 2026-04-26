@@ -83,20 +83,20 @@ enum BridgeControllerTests {
             }
 
             try await MainActor.run {
-                try expect(parts.clipboardService.copiedURLs == [URL(fileURLWithPath: "/tmp/Screenshot 1.png")], "Screenshot should be copied to clipboard service")
+                try expect(parts.clipboardService.copiedURLs == [URL(fileURLWithPath: "/tmp/Screenshot 1.png")], "Screenshot file URL should be copied to clipboard service")
                 try expect(parts.clipboardWatcher.ignoredChangeCounts == [44], "Controller should ignore its own pasteboard write")
                 try expect(didAutoPaste, "Auto-paste should receive trimmed bundle identifier")
-                try expect(parts.autoPasteService.detectInitialPromptScreenCalls == [true], "Startup-screen detector should be on by default")
-                try expect(parts.controller.recentEvents.contains(where: { $0.contains("Copied Screenshot 1.png to clipboard.") }), "Copy log should be recorded")
+                try expect(parts.autoPasteService.detectInitialPromptScreenCalls == [false], "Startup-screen detector should be off by default for normal conversation speed")
+                try expect(parts.controller.recentEvents.contains(where: { $0.contains("Prepared Screenshot 1.png for file paste.") }), "File paste log should be recorded")
                 try expect(parts.controller.recentEvents.contains(where: {
                     $0.contains("Sent Cmd+V to Codex (file screenshot) in 1ms: fake 1ms.")
                 }), "Auto-paste log should be recorded")
             }
         },
-        CodexTestCase(name: "BridgeController can turn off startup-screen detection") {
+        CodexTestCase(name: "BridgeController can turn on startup-screen detection") {
             let parts = await MainActor.run {
                 let defaults = makeTestDefaults()
-                defaults.set(false, forKey: BridgeController.DefaultsKeys.detectInitialPromptScreen)
+                defaults.set(true, forKey: BridgeController.DefaultsKeys.detectInitialPromptScreen)
                 return makeController(defaults: defaults)
             }
 
@@ -104,7 +104,7 @@ enum BridgeControllerTests {
                 parts.watcher.emit(URL(fileURLWithPath: "/tmp/Screenshot startup.png"))
             }
             let didPassStartupDetectionFlag = await waitUntil {
-                parts.autoPasteService.detectInitialPromptScreenCalls == [false]
+                parts.autoPasteService.detectInitialPromptScreenCalls == [true]
             }
 
             try await MainActor.run {

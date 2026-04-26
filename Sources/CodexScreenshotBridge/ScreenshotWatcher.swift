@@ -23,7 +23,7 @@ final class ScreenshotWatcher: @unchecked Sendable, ScreenshotWatching {
     private var watchedDirectoryURL: URL?
     private var seenFileNames: Set<String> = []
     private var pendingScanWorkItem: DispatchWorkItem?
-    private let scanDebounceDelay: DispatchTimeInterval = .milliseconds(20)
+    private let scanDebounceDelay: DispatchTimeInterval = .milliseconds(5)
 
     func startWatching(directoryURL: URL) throws {
         try queue.sync {

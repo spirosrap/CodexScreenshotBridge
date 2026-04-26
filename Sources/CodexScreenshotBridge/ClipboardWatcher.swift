@@ -13,7 +13,7 @@ final class ClipboardWatcher: @unchecked Sendable, ClipboardWatching {
         stop()
 
         state = ClipboardWatcherState(initialChangeCount: NSPasteboard.general.changeCount)
-        let timer = Timer(timeInterval: 0.015, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.008, repeats: true) { [weak self] _ in
             self?.pollPasteboard()
         }
         self.timer = timer

@@ -24,7 +24,7 @@ package struct ContentView: View {
             Toggle("Handle clipboard screenshot shortcut", isOn: $controller.listenClipboardImages)
                 .disabled(!controller.bridgeEnabled)
 
-            Toggle("Startup-screen detector", isOn: $controller.detectInitialPromptScreen)
+            Toggle("Startup fallback detector", isOn: $controller.detectInitialPromptScreen)
                 .disabled(!controller.bridgeEnabled || !controller.autoPasteEnabled)
 
             Button("Capture Area + Paste") {

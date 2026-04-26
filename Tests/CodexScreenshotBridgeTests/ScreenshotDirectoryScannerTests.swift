@@ -66,7 +66,7 @@ enum ScreenshotDirectoryScannerTests {
             }
 
             try expect(!result, "Missing file should not become readable")
-            try expect(sleepCalls == 8, "Missing file should use the full retry budget")
+            try expect(sleepCalls == ScreenshotDirectoryScanner.readableRetryCount, "Missing file should use the full retry budget")
         },
     ]
 

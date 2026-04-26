@@ -22,6 +22,9 @@ package enum ScreenshotFileClassifier {
 }
 
 package enum ScreenshotDirectoryScanner {
+    package static let readableRetryCount = 20
+    package static let readableRetryInterval: TimeInterval = 0.005
+
     package static func listCandidateFiles(
         in directoryURL: URL,
         fileManager: FileManager = .default
@@ -56,7 +59,7 @@ package enum ScreenshotDirectoryScanner {
         fileManager: FileManager = .default,
         sleep: (TimeInterval) -> Void = Thread.sleep
     ) -> Bool {
-        for _ in 0..<8 {
+        for _ in 0..<readableRetryCount {
             if fileManager.isReadableFile(atPath: url.path),
                let attributes = try? fileManager.attributesOfItem(atPath: url.path),
                let size = attributes[.size] as? NSNumber,
@@ -64,7 +67,7 @@ package enum ScreenshotDirectoryScanner {
                 return true
             }
 
-            sleep(0.025)
+            sleep(readableRetryInterval)
         }
 
         return fileManager.isReadableFile(atPath: url.path)

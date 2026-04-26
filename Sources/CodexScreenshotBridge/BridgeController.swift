@@ -83,7 +83,7 @@ package final class BridgeController: ObservableObject {
         bridgeEnabled = defaults.object(forKey: DefaultsKeys.bridgeEnabled) as? Bool ?? true
         autoPasteEnabled = defaults.object(forKey: DefaultsKeys.autoPasteEnabled) as? Bool ?? true
         listenClipboardImages = defaults.object(forKey: DefaultsKeys.listenClipboardImages) as? Bool ?? true
-        detectInitialPromptScreen = defaults.object(forKey: DefaultsKeys.detectInitialPromptScreen) as? Bool ?? true
+        detectInitialPromptScreen = defaults.object(forKey: DefaultsKeys.detectInitialPromptScreen) as? Bool ?? false
         codexBundleIdentifier = defaults.string(forKey: DefaultsKeys.codexBundleIdentifier) ?? ""
 
         configureWatcherCallback()
@@ -253,9 +253,9 @@ package final class BridgeController: ObservableObject {
 
         let eventStartedAtUptimeNanoseconds = Self.currentUptimeNanoseconds()
         do {
-            let changeCount = try clipboardService.copyImage(at: url)
+            let changeCount = try clipboardService.copyFileURL(at: url)
             clipboardWatcher.ignore(changeCount: changeCount)
-            addLog("Copied \(url.lastPathComponent) to clipboard.")
+            addLog("Prepared \(url.lastPathComponent) for file paste.")
         } catch {
             addLog("Copy failed: \(error.localizedDescription)")
             return

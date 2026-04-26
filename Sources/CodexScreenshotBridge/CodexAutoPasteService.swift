@@ -51,7 +51,7 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
     }
 
     private let pasteKey: CGKeyCode = 9
-    private let conversationLayoutCacheLifetime: TimeInterval = 0
+    private let conversationLayoutCacheLifetime: TimeInterval = 600
     private let firstPromptLayoutCacheLifetime: TimeInterval = 12
     private let postStartupConversationCooldown: TimeInterval = 45
     private var cachedComposerLayout: CachedComposerLayout?
@@ -118,6 +118,14 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
             try await Task.sleep(for: .milliseconds(3))
             timing.mark("activate")
         }
+
+        if try await focusConversationComposerIfPossible(processID: runningApp.processIdentifier) {
+            timing.mark("focus-conversation-fast")
+            try sendCommandVGlobal()
+            timing.mark("paste-fast")
+            return timing.report()
+        }
+        timing.mark("focus-conversation-miss")
 
         let layout = await composerLayout(for: runningApp.processIdentifier)
         timing.mark(layout == .firstPrompt ? "layout-startup" : "layout-conversation")
@@ -392,6 +400,19 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
         }
 
         return ComposerPointCalculator.editorFocusPoints(in: bounds, layout: layout)
+    }
+
+    private func focusConversationComposerIfPossible(processID: pid_t) async throws -> Bool {
+        if focusedElementKind(expectedPID: processID, allowWebArea: false) == .textLike {
+            return true
+        }
+
+        clickPoints(
+            composerActivationPoints(in: processID, layout: .conversation)
+        )
+        try await Task.sleep(for: .milliseconds(12))
+
+        return focusedElementKind(expectedPID: processID, allowWebArea: false) == .textLike
     }
 
     private func composerLayout(for processID: pid_t) async -> CodexComposerLayout {
