@@ -64,7 +64,7 @@ package enum ScreenshotDirectoryScanner {
                 return true
             }
 
-            sleep(0.08)
+            sleep(0.025)
         }
 
         return fileManager.isReadableFile(atPath: url.path)

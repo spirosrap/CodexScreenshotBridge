@@ -7,6 +7,7 @@ package final class BridgeController: ObservableObject {
         package static let bridgeEnabled = "bridgeEnabled"
         package static let autoPasteEnabled = "autoPasteEnabled"
         package static let listenClipboardImages = "listenClipboardImages"
+        package static let detectInitialPromptScreen = "detectInitialPromptScreen"
         package static let screenshotDirectoryPath = "screenshotDirectoryPath"
         package static let codexBundleIdentifier = "codexBundleIdentifier"
     }
@@ -31,6 +32,12 @@ package final class BridgeController: ObservableObject {
         }
     }
 
+    @Published package var detectInitialPromptScreen: Bool {
+        didSet {
+            defaults.set(detectInitialPromptScreen, forKey: DefaultsKeys.detectInitialPromptScreen)
+        }
+    }
+
     @Published package var codexBundleIdentifier: String {
         didSet {
             defaults.set(codexBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -49,6 +56,7 @@ package final class BridgeController: ObservableObject {
     private let watcher: any ScreenshotWatching
     private let clipboardWatcher: any ClipboardWatching
     private let clipboardService: any ClipboardServicing
+    private let screenshotCaptureService: any ScreenshotCaptureServicing
     private let autoPasteService: any CodexAutoPasteServing
     private let defaultScreenshotDirectoryProvider: (UserDefaults) -> String
     private var isClipboardWatcherRunning = false
@@ -58,6 +66,7 @@ package final class BridgeController: ObservableObject {
         watcher: any ScreenshotWatching,
         clipboardWatcher: any ClipboardWatching,
         clipboardService: any ClipboardServicing,
+        screenshotCaptureService: any ScreenshotCaptureServicing,
         autoPasteService: any CodexAutoPasteServing,
         defaultScreenshotDirectoryProvider: @escaping (UserDefaults) -> String
     ) {
@@ -65,6 +74,7 @@ package final class BridgeController: ObservableObject {
         self.watcher = watcher
         self.clipboardWatcher = clipboardWatcher
         self.clipboardService = clipboardService
+        self.screenshotCaptureService = screenshotCaptureService
         self.autoPasteService = autoPasteService
         self.defaultScreenshotDirectoryProvider = defaultScreenshotDirectoryProvider
 
@@ -73,6 +83,7 @@ package final class BridgeController: ObservableObject {
         bridgeEnabled = defaults.object(forKey: DefaultsKeys.bridgeEnabled) as? Bool ?? true
         autoPasteEnabled = defaults.object(forKey: DefaultsKeys.autoPasteEnabled) as? Bool ?? true
         listenClipboardImages = defaults.object(forKey: DefaultsKeys.listenClipboardImages) as? Bool ?? true
+        detectInitialPromptScreen = defaults.object(forKey: DefaultsKeys.detectInitialPromptScreen) as? Bool ?? true
         codexBundleIdentifier = defaults.string(forKey: DefaultsKeys.codexBundleIdentifier) ?? ""
 
         configureWatcherCallback()
@@ -93,6 +104,7 @@ package final class BridgeController: ObservableObject {
             watcher: ScreenshotWatcher(),
             clipboardWatcher: ClipboardWatcher(),
             clipboardService: ClipboardService(),
+            screenshotCaptureService: ScreenshotCaptureService(),
             autoPasteService: CodexAutoPasteService(),
             defaultScreenshotDirectoryProvider: { defaults in
                 BridgeController.defaultScreenshotDirectoryPath(defaults: defaults)
@@ -130,6 +142,35 @@ package final class BridgeController: ObservableObject {
         }
 
         startWatching()
+    }
+
+    package func captureAreaAndPaste() {
+        guard bridgeEnabled else {
+            addLog("Bridge is disabled. Enable it first.")
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            addLog("Select area for direct capture.")
+
+            do {
+                guard let url = try await screenshotCaptureService.captureInteractiveScreenshot() else {
+                    addLog("Direct capture canceled.")
+                    return
+                }
+
+                let changeCount = try clipboardService.copyFileURL(at: url)
+                clipboardWatcher.ignore(changeCount: changeCount)
+                addLog("Captured \(url.lastPathComponent) for direct paste.")
+                autoPasteIntoCodexIfEnabled(source: "direct capture")
+            } catch {
+                addLog("Direct capture failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     package func requestAccessibilityAccess() {
@@ -190,6 +231,10 @@ package final class BridgeController: ObservableObject {
     private func startWatching() {
         do {
             let directoryURL = URL(fileURLWithPath: screenshotDirectoryPath, isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: directoryURL,
+                withIntermediateDirectories: true
+            )
             try watcher.startWatching(directoryURL: directoryURL)
             isWatching = true
             addLog("Watching \(directoryURL.path).")
@@ -206,6 +251,7 @@ package final class BridgeController: ObservableObject {
             return
         }
 
+        let eventStartedAtUptimeNanoseconds = Self.currentUptimeNanoseconds()
         do {
             let changeCount = try clipboardService.copyImage(at: url)
             clipboardWatcher.ignore(changeCount: changeCount)
@@ -215,7 +261,10 @@ package final class BridgeController: ObservableObject {
             return
         }
 
-        autoPasteIntoCodexIfEnabled(source: "file screenshot")
+        autoPasteIntoCodexIfEnabled(
+            source: "file screenshot",
+            eventStartedAtUptimeNanoseconds: eventStartedAtUptimeNanoseconds
+        )
     }
 
     private func handleClipboardImageEvent(_ event: ClipboardWatchEvent) {
@@ -224,11 +273,19 @@ package final class BridgeController: ObservableObject {
         }
 
         let types = event.types.joined(separator: ", ")
-        addLog("Detected clipboard image (\(types)).")
-        autoPasteIntoCodexIfEnabled(source: "clipboard screenshot")
+        addLog(
+            "Detected clipboard image (\(types)). Image-ready \(Self.elapsedMilliseconds(since: event.detectedAtUptimeNanoseconds))ms."
+        )
+        autoPasteIntoCodexIfEnabled(
+            source: "clipboard screenshot",
+            eventStartedAtUptimeNanoseconds: event.detectedAtUptimeNanoseconds
+        )
     }
 
-    private func autoPasteIntoCodexIfEnabled(source: String) {
+    private func autoPasteIntoCodexIfEnabled(
+        source: String,
+        eventStartedAtUptimeNanoseconds: UInt64? = nil
+    ) {
         guard autoPasteEnabled else {
             return
         }
@@ -239,10 +296,16 @@ package final class BridgeController: ObservableObject {
             }
 
             do {
-                try await autoPasteService.activateCodexAndPaste(
-                    codexBundleIdentifier: normalizedCodexBundleIdentifier
+                let report = try await autoPasteService.activateCodexAndPaste(
+                    codexBundleIdentifier: normalizedCodexBundleIdentifier,
+                    detectInitialPromptScreen: detectInitialPromptScreen
                 )
-                addLog("Sent Cmd+V to Codex (\(source)).")
+                let totalSuffix = eventStartedAtUptimeNanoseconds.map {
+                    " Event-to-paste \(Self.elapsedMilliseconds(since: $0))ms."
+                } ?? ""
+                addLog(
+                    "Sent Cmd+V to Codex (\(source)) in \(report.elapsedMilliseconds)ms: \(report.summary).\(totalSuffix)"
+                )
             } catch {
                 addLog("Auto-paste failed: \(error.localizedDescription)")
             }
@@ -300,7 +363,22 @@ package final class BridgeController: ObservableObject {
 
     private static let logFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
+        formatter.dateFormat = "HH:mm:ss.SSS"
         return formatter
     }()
+
+    private static func currentUptimeNanoseconds() -> UInt64 {
+        DispatchTime.now().uptimeNanoseconds
+    }
+
+    private static func elapsedMilliseconds(since startUptimeNanoseconds: UInt64) -> Int {
+        let elapsedNanoseconds = currentUptimeNanoseconds().saturatingSubtracting(startUptimeNanoseconds)
+        return Int((Double(elapsedNanoseconds) / 1_000_000).rounded())
+    }
+}
+
+private extension UInt64 {
+    func saturatingSubtracting(_ other: UInt64) -> UInt64 {
+        self >= other ? self - other : 0
+    }
 }

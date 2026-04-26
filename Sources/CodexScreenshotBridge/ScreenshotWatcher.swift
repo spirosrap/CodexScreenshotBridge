@@ -23,6 +23,7 @@ final class ScreenshotWatcher: @unchecked Sendable, ScreenshotWatching {
     private var watchedDirectoryURL: URL?
     private var seenFileNames: Set<String> = []
     private var pendingScanWorkItem: DispatchWorkItem?
+    private let scanDebounceDelay: DispatchTimeInterval = .milliseconds(20)
 
     func startWatching(directoryURL: URL) throws {
         try queue.sync {
@@ -102,7 +103,7 @@ final class ScreenshotWatcher: @unchecked Sendable, ScreenshotWatching {
         }
 
         pendingScanWorkItem = workItem
-        queue.asyncAfter(deadline: .now() + 0.08, execute: workItem)
+        queue.asyncAfter(deadline: .now() + scanDebounceDelay, execute: workItem)
     }
 
     private func scanForNewScreenshotsOnQueue() {
@@ -114,14 +115,13 @@ final class ScreenshotWatcher: @unchecked Sendable, ScreenshotWatching {
             return
         }
 
-        let sortedCandidates = ScreenshotDirectoryScanner.sortCandidatesByCreationDate(candidates)
+        let newCandidates = candidates.filter { candidate in
+            !seenFileNames.contains(candidate.lastPathComponent)
+        }
+        let sortedCandidates = ScreenshotDirectoryScanner.sortCandidatesByCreationDate(newCandidates)
 
         for candidate in sortedCandidates {
             let fileName = candidate.lastPathComponent
-            if seenFileNames.contains(fileName) {
-                continue
-            }
-
             seenFileNames.insert(fileName)
 
             guard ScreenshotDirectoryScanner.waitUntilReadable(candidate) else {

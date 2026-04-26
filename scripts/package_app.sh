@@ -8,6 +8,7 @@ VERSION="${VERSION:-1.1.1}"
 BUILD_NUMBER="${BUILD_NUMBER:-2}"
 MIN_MACOS="${MIN_MACOS:-13.0}"
 OUTPUT_APP="${OUTPUT_APP:-$HOME/Applications/${APP_NAME}.app}"
+SIGN_IDENTITY="${APP_IDENTITY:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -61,8 +62,20 @@ cat > "$OUTPUT_APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "Signing app (ad-hoc)..."
-codesign --force --deep --sign - "$OUTPUT_APP"
+if [[ -z "$SIGN_IDENTITY" ]]; then
+  if security find-identity -v -p codesigning | grep -q '"CodexBar Development"'; then
+    SIGN_IDENTITY="CodexBar Development"
+  else
+    SIGN_IDENTITY="-"
+  fi
+fi
+
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  echo "Signing app (ad-hoc)..."
+else
+  echo "Signing app with identity: $SIGN_IDENTITY"
+fi
+codesign --force --deep --sign "$SIGN_IDENTITY" "$OUTPUT_APP"
 
 echo "Done."
 echo "App: $OUTPUT_APP"

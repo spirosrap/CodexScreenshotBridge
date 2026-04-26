@@ -143,3 +143,21 @@ package enum ComposerPointCalculator {
         return points
     }
 }
+
+package enum CodexWindowCaptureSizer {
+    package static let defaultMaxDimension: CGFloat = 1_200
+
+    package static func outputSize(
+        for frame: CGRect,
+        maxDimension: CGFloat = defaultMaxDimension
+    ) -> CGSize {
+        let sourceWidth = max(frame.width, 1)
+        let sourceHeight = max(frame.height, 1)
+        let scale = min(1, maxDimension / max(sourceWidth, sourceHeight))
+
+        return CGSize(
+            width: max((sourceWidth * scale).rounded(.toNearestOrAwayFromZero), 1),
+            height: max((sourceHeight * scale).rounded(.toNearestOrAwayFromZero), 1)
+        )
+    }
+}

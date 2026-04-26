@@ -13,7 +13,7 @@ final class ClipboardWatcher: @unchecked Sendable, ClipboardWatching {
         stop()
 
         state = ClipboardWatcherState(initialChangeCount: NSPasteboard.general.changeCount)
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.015, repeats: true) { [weak self] _ in
             self?.pollPasteboard()
         }
         self.timer = timer
@@ -32,10 +32,11 @@ final class ClipboardWatcher: @unchecked Sendable, ClipboardWatching {
 
     private func pollPasteboard() {
         let pasteboard = NSPasteboard.general
+        let types = (pasteboard.types ?? []).map(\.rawValue)
         let event = state.processPoll(
             currentChangeCount: pasteboard.changeCount,
-            hasImage: NSImage(pasteboard: pasteboard) != nil,
-            types: (pasteboard.types ?? []).map(\.rawValue)
+            hasImage: ClipboardImageTypeClassifier.hasImageType(types),
+            types: types
         )
 
         if let event {

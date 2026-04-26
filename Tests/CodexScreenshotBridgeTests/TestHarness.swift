@@ -45,6 +45,23 @@ func drainAsyncTasks(_ count: Int = 8) async {
     }
 }
 
+func waitUntil(
+    timeoutNanoseconds: UInt64 = 1_000_000_000,
+    condition: @escaping @MainActor () -> Bool
+) async -> Bool {
+    let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+
+    while DispatchTime.now().uptimeNanoseconds < deadline {
+        if await condition() {
+            return true
+        }
+
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+
+    return await condition()
+}
+
 struct FakeLocalizedError: LocalizedError {
     let message: String
 
@@ -103,6 +120,9 @@ final class FakeClipboardService: ClipboardServicing {
     var copiedURLs: [URL] = []
     var nextChangeCount = 1
     var copyError: Error?
+    var clipboardReplacementTypes: [[String]] = []
+    var clipboardReplacementChangeCount: Int?
+    var clipboardReplacementError: Error?
 
     func copyImage(at url: URL) throws -> Int {
         copiedURLs.append(url)
@@ -112,6 +132,40 @@ final class FakeClipboardService: ClipboardServicing {
 
         return nextChangeCount
     }
+
+    func copyFileURL(at url: URL) throws -> Int {
+        copiedURLs.append(url)
+        if let copyError {
+            throw copyError
+        }
+
+        return nextChangeCount
+    }
+
+    func replaceClipboardImageWithTemporaryFile(types: [String]) throws -> Int? {
+        clipboardReplacementTypes.append(types)
+        if let clipboardReplacementError {
+            throw clipboardReplacementError
+        }
+
+        return clipboardReplacementChangeCount
+    }
+}
+
+@MainActor
+final class FakeScreenshotCaptureService: ScreenshotCaptureServicing {
+    var capturedURL: URL?
+    var captureError: Error?
+    var captureCallCount = 0
+
+    func captureInteractiveScreenshot() async throws -> URL? {
+        captureCallCount += 1
+        if let captureError {
+            throw captureError
+        }
+
+        return capturedURL
+    }
 }
 
 @MainActor
@@ -120,6 +174,7 @@ final class FakeAutoPasteService: CodexAutoPasteServing {
     var screenRecordingPermissionGranted = false
     var accessibilityPromptRequests: [Bool] = []
     var activateCalls: [String?] = []
+    var detectInitialPromptScreenCalls: [Bool] = []
     var activationError: Error?
     var requestScreenRecordingResult = false
 
@@ -141,11 +196,21 @@ final class FakeAutoPasteService: CodexAutoPasteServing {
         return requestScreenRecordingResult
     }
 
-    func activateCodexAndPaste(codexBundleIdentifier: String?) async throws {
+    func activateCodexAndPaste(
+        codexBundleIdentifier: String?,
+        detectInitialPromptScreen: Bool
+    ) async throws -> CodexAutoPasteReport {
         activateCalls.append(codexBundleIdentifier)
+        detectInitialPromptScreenCalls.append(detectInitialPromptScreen)
         if let activationError {
             throw activationError
         }
+
+        return CodexAutoPasteReport(
+            stages: [
+                AutoPasteStageTiming(name: "fake", milliseconds: 1),
+            ]
+        )
     }
 }
 
@@ -154,6 +219,8 @@ final class FakePasteboardWriter: PasteboardWriting {
     var clearContentsCallCount = 0
     var wroteImageCount = 0
     var wroteFileURLCount = 0
+    var writtenFileURLs: [URL] = []
+    var dataByType: [String: Data] = [:]
     var imageWriteResult = true
     var fileURLWriteResult = false
 
@@ -172,7 +239,12 @@ final class FakePasteboardWriter: PasteboardWriting {
 
     func write(fileURL: URL) -> Bool {
         wroteFileURLCount += 1
+        writtenFileURLs.append(fileURL)
         return fileURLWriteResult
+    }
+
+    func data(forType rawType: String) -> Data? {
+        dataByType[rawType]
     }
 }
 

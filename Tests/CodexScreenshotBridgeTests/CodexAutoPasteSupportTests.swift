@@ -82,5 +82,19 @@ enum CodexAutoPasteSupportTests {
             ], "First prompt activation points should span the centered composer")
             try expect(focusPoints == [CGPoint(x: 100, y: 199), CGPoint(x: 140, y: 199)], "First prompt focus points should target the editor line")
         },
+        CodexTestCase(name: "CodexWindowCaptureSizer downsizes large windows for OCR") {
+            let size = CodexWindowCaptureSizer.outputSize(
+                for: CGRect(x: 0, y: 0, width: 2400, height: 1600)
+            )
+
+            try expect(size == CGSize(width: 1200, height: 800), "Large capture should preserve aspect ratio under the max dimension")
+        },
+        CodexTestCase(name: "CodexWindowCaptureSizer keeps small windows at native size") {
+            let size = CodexWindowCaptureSizer.outputSize(
+                for: CGRect(x: 0, y: 0, width: 800, height: 500)
+            )
+
+            try expect(size == CGSize(width: 800, height: 500), "Small capture should not be upscaled")
+        },
     ]
 }

@@ -24,6 +24,14 @@ package struct ContentView: View {
             Toggle("Handle clipboard screenshot shortcut", isOn: $controller.listenClipboardImages)
                 .disabled(!controller.bridgeEnabled)
 
+            Toggle("Startup-screen detector", isOn: $controller.detectInitialPromptScreen)
+                .disabled(!controller.bridgeEnabled || !controller.autoPasteEnabled)
+
+            Button("Capture Area + Paste") {
+                controller.captureAreaAndPaste()
+            }
+            .disabled(!controller.bridgeEnabled || !controller.autoPasteEnabled)
+
             VStack(alignment: .leading, spacing: 5) {
                 Text("Screenshot Folder")
                     .font(.caption)
@@ -124,7 +132,7 @@ package struct ContentView: View {
                 }
             }
 
-            Text("Screen Recording is only used for the one-shot startup-screen check.")
+            Text("Screen Recording is used only for startup-screen detection.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

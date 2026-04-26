@@ -18,6 +18,7 @@ enum BridgeControllerTests {
                     watcher: watcher,
                     clipboardWatcher: clipboardWatcher,
                     clipboardService: clipboardService,
+                    screenshotCaptureService: FakeScreenshotCaptureService(),
                     autoPasteService: autoPasteService,
                     defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
                 )
@@ -43,6 +44,7 @@ enum BridgeControllerTests {
                     watcher: watcher,
                     clipboardWatcher: clipboardWatcher,
                     clipboardService: FakeClipboardService(),
+                    screenshotCaptureService: FakeScreenshotCaptureService(),
                     autoPasteService: FakeAutoPasteService(),
                     defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
                 )
@@ -76,14 +78,37 @@ enum BridgeControllerTests {
                 parts.clipboardService.nextChangeCount = 44
                 parts.watcher.emit(URL(fileURLWithPath: "/tmp/Screenshot 1.png"))
             }
-            await drainAsyncTasks()
+            let didAutoPaste = await waitUntil {
+                parts.autoPasteService.activateCalls == ["com.example.codex"]
+            }
 
             try await MainActor.run {
                 try expect(parts.clipboardService.copiedURLs == [URL(fileURLWithPath: "/tmp/Screenshot 1.png")], "Screenshot should be copied to clipboard service")
                 try expect(parts.clipboardWatcher.ignoredChangeCounts == [44], "Controller should ignore its own pasteboard write")
-                try expect(parts.autoPasteService.activateCalls == ["com.example.codex"], "Auto-paste should receive trimmed bundle identifier")
+                try expect(didAutoPaste, "Auto-paste should receive trimmed bundle identifier")
+                try expect(parts.autoPasteService.detectInitialPromptScreenCalls == [true], "Startup-screen detector should be on by default")
                 try expect(parts.controller.recentEvents.contains(where: { $0.contains("Copied Screenshot 1.png to clipboard.") }), "Copy log should be recorded")
-                try expect(parts.controller.recentEvents.contains(where: { $0.contains("Sent Cmd+V to Codex (file screenshot).") }), "Auto-paste log should be recorded")
+                try expect(parts.controller.recentEvents.contains(where: {
+                    $0.contains("Sent Cmd+V to Codex (file screenshot) in 1ms: fake 1ms.")
+                }), "Auto-paste log should be recorded")
+            }
+        },
+        CodexTestCase(name: "BridgeController can turn off startup-screen detection") {
+            let parts = await MainActor.run {
+                let defaults = makeTestDefaults()
+                defaults.set(false, forKey: BridgeController.DefaultsKeys.detectInitialPromptScreen)
+                return makeController(defaults: defaults)
+            }
+
+            await MainActor.run {
+                parts.watcher.emit(URL(fileURLWithPath: "/tmp/Screenshot startup.png"))
+            }
+            let didPassStartupDetectionFlag = await waitUntil {
+                parts.autoPasteService.detectInitialPromptScreenCalls == [false]
+            }
+
+            try await MainActor.run {
+                try expect(didPassStartupDetectionFlag, "Persisted startup-screen detector setting should be passed to auto-paste")
             }
         },
         CodexTestCase(name: "BridgeController logs screenshot copy failure without auto-paste") {
@@ -104,10 +129,13 @@ enum BridgeControllerTests {
             await MainActor.run {
                 parts.clipboardWatcher.emit(changeCount: 9, types: ["public.png", "public.tiff"])
             }
-            await drainAsyncTasks()
+            let didPasteClipboardImage = await waitUntil {
+                parts.autoPasteService.activateCalls.count == 1
+            }
 
             try await MainActor.run {
-                try expect(parts.autoPasteService.activateCalls.count == 1, "Clipboard image should trigger one paste")
+                try expect(didPasteClipboardImage, "Clipboard image should trigger one paste")
+                try expect(parts.clipboardService.clipboardReplacementTypes.isEmpty, "Clipboard image should remain on the pasteboard for raw paste")
                 try expect(parts.controller.recentEvents.contains(where: {
                     $0.contains("Detected clipboard image (public.png, public.tiff).")
                 }), "Clipboard detection should be logged")
@@ -126,6 +154,22 @@ enum BridgeControllerTests {
                 try expect(previousCount == parts.autoPasteService.activateCalls.count, "Disabled clipboard listening should block further pastes")
                 try expect(parts.clipboardWatcher.stopCallCount == 1, "Disabling clipboard listening should stop watcher")
                 try expect(parts.controller.recentEvents.contains(where: { $0.contains("Clipboard watcher paused.") }), "Pause log should be recorded")
+            }
+        },
+        CodexTestCase(name: "BridgeController preserves clipboard image without pasteboard rewrite") {
+            let parts = await MainActor.run { makeController() }
+            await MainActor.run {
+                parts.clipboardService.clipboardReplacementChangeCount = 99
+                parts.clipboardWatcher.emit(changeCount: 12, types: ["public.png"])
+            }
+            let didAutoPaste = await waitUntil {
+                parts.autoPasteService.activateCalls.count == 1
+            }
+
+            try await MainActor.run {
+                try expect(didAutoPaste, "Prepared clipboard screenshot should still trigger auto-paste")
+                try expect(parts.clipboardService.clipboardReplacementTypes.isEmpty, "Clipboard paste should not rewrite image data into a file URL")
+                try expect(parts.clipboardWatcher.ignoredChangeCounts.isEmpty, "No pasteboard rewrite should be ignored for clipboard image paste")
             }
         },
         CodexTestCase(name: "BridgeController bridge toggle stops and restarts watchers") {
@@ -163,6 +207,7 @@ enum BridgeControllerTests {
                     watcher: watcher,
                     clipboardWatcher: clipboardWatcher,
                     clipboardService: FakeClipboardService(),
+                    screenshotCaptureService: FakeScreenshotCaptureService(),
                     autoPasteService: FakeAutoPasteService(),
                     defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
                 )
@@ -195,32 +240,74 @@ enum BridgeControllerTests {
             let path = BridgeController.defaultScreenshotDirectoryPath(defaults: defaults)
             try expect(path == NSString(string: "~/Screenshots").expandingTildeInPath, "Configured screenshot location should be expanded from defaults")
         },
+        CodexTestCase(name: "BridgeController direct capture writes file URL and auto-pastes") {
+            let parts = await MainActor.run { makeController() }
+            await MainActor.run {
+                parts.screenshotCaptureService.capturedURL = URL(fileURLWithPath: "/tmp/Bridge-Capture.png")
+                parts.clipboardService.nextChangeCount = 77
+                parts.controller.captureAreaAndPaste()
+            }
+            let didAutoPaste = await waitUntil {
+                parts.autoPasteService.activateCalls.count == 1
+            }
+
+            try await MainActor.run {
+                try expect(didAutoPaste, "Direct capture should trigger auto-paste")
+                try expect(parts.screenshotCaptureService.captureCallCount == 1, "Direct capture service should be invoked")
+                try expect(parts.clipboardService.copiedURLs == [URL(fileURLWithPath: "/tmp/Bridge-Capture.png")], "Direct capture file URL should be copied")
+                try expect(parts.clipboardWatcher.ignoredChangeCounts == [77], "Direct capture pasteboard write should be ignored")
+                try expect(parts.controller.recentEvents.contains(where: {
+                    $0.contains("Captured Bridge-Capture.png for direct paste.")
+                }), "Direct capture should be logged")
+            }
+        },
+        CodexTestCase(name: "BridgeController direct capture cancellation does not paste") {
+            let parts = await MainActor.run { makeController() }
+            await MainActor.run {
+                parts.screenshotCaptureService.capturedURL = nil
+                parts.controller.captureAreaAndPaste()
+            }
+            await drainAsyncTasks()
+
+            try await MainActor.run {
+                try expect(parts.screenshotCaptureService.captureCallCount == 1, "Direct capture service should be invoked")
+                try expect(parts.autoPasteService.activateCalls.isEmpty, "Canceled direct capture should not paste")
+                try expect(parts.controller.recentEvents.contains(where: {
+                    $0.contains("Direct capture canceled.")
+                }), "Cancellation should be logged")
+            }
+        },
     ]
 
     @MainActor
-    private static func makeController() -> (
+    private static func makeController(
+        defaults: UserDefaults = makeTestDefaults()
+    ) -> (
         controller: BridgeController,
         watcher: FakeScreenshotWatcher,
         clipboardWatcher: FakeClipboardWatcher,
         clipboardService: FakeClipboardService,
+        screenshotCaptureService: FakeScreenshotCaptureService,
         autoPasteService: FakeAutoPasteService
     ) {
         let watcher = FakeScreenshotWatcher()
         let clipboardWatcher = FakeClipboardWatcher()
         let clipboardService = FakeClipboardService()
+        let screenshotCaptureService = FakeScreenshotCaptureService()
         let autoPasteService = FakeAutoPasteService()
         autoPasteService.accessibilityPermissionGranted = true
         autoPasteService.screenRecordingPermissionGranted = false
 
         let controller = BridgeController(
-            defaults: makeTestDefaults(),
+            defaults: defaults,
             watcher: watcher,
             clipboardWatcher: clipboardWatcher,
             clipboardService: clipboardService,
+            screenshotCaptureService: screenshotCaptureService,
             autoPasteService: autoPasteService,
             defaultScreenshotDirectoryProvider: { _ in "/tmp/screenshots" }
         )
 
-        return (controller, watcher, clipboardWatcher, clipboardService, autoPasteService)
+        return (controller, watcher, clipboardWatcher, clipboardService, screenshotCaptureService, autoPasteService)
     }
 }

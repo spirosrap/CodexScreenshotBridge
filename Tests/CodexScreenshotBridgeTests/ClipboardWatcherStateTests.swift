@@ -22,12 +22,17 @@ enum ClipboardWatcherStateTests {
             let event = state.processPoll(
                 currentChangeCount: 2,
                 hasImage: true,
-                types: ["public.png", "public.tiff"]
+                types: ["public.png", "public.tiff"],
+                nowUptimeNanoseconds: 100
             )
 
             try expectEqual(
                 event,
-                ClipboardWatchEvent(changeCount: 2, types: ["public.png", "public.tiff"]),
+                ClipboardWatchEvent(
+                    changeCount: 2,
+                    types: ["public.png", "public.tiff"],
+                    detectedAtUptimeNanoseconds: 100
+                ),
                 "Ready image should emit event"
             )
             try expect(state.pendingChangeCount == nil, "Event emission should clear pending state")
@@ -35,14 +40,27 @@ enum ClipboardWatcherStateTests {
         CodexTestCase(name: "ClipboardWatcherState retries until image becomes available") {
             var state = ClipboardWatcherState(initialChangeCount: 7, maxImageResolutionRetries: 2)
 
-            try expect(state.processPoll(currentChangeCount: 8, hasImage: false, types: []) == nil, "First missing image should not emit event")
+            try expect(state.processPoll(currentChangeCount: 8, hasImage: false, types: [], nowUptimeNanoseconds: 200) == nil, "First missing image should not emit event")
             try expect(state.pendingRetryCount == 1, "First retry should increment retry count")
 
-            try expect(state.processPoll(currentChangeCount: 8, hasImage: false, types: []) == nil, "Second missing image should not emit event")
+            try expect(state.processPoll(currentChangeCount: 8, hasImage: false, types: [], nowUptimeNanoseconds: 215) == nil, "Second missing image should not emit event")
             try expect(state.pendingRetryCount == 2, "Second retry should increment retry count")
 
-            let event = state.processPoll(currentChangeCount: 8, hasImage: true, types: ["public.png"])
-            try expectEqual(event, ClipboardWatchEvent(changeCount: 8, types: ["public.png"]), "Delayed image should emit once ready")
+            let event = state.processPoll(
+                currentChangeCount: 8,
+                hasImage: true,
+                types: ["public.png"],
+                nowUptimeNanoseconds: 230
+            )
+            try expectEqual(
+                event,
+                ClipboardWatchEvent(
+                    changeCount: 8,
+                    types: ["public.png"],
+                    detectedAtUptimeNanoseconds: 200
+                ),
+                "Delayed image should emit once ready"
+            )
             try expect(state.pendingRetryCount == 0, "Successful event should reset retry count")
             try expect(state.pendingChangeCount == nil, "Successful event should clear pending change count")
         },
@@ -67,6 +85,32 @@ enum ClipboardWatcherStateTests {
             try expect(state.ignoredChangeCounts.isEmpty, "Reset should clear ignored change counts")
             try expect(state.pendingChangeCount == nil, "Reset should clear pending change count")
             try expect(state.pendingRetryCount == 0, "Reset should clear retry count")
+        },
+        CodexTestCase(name: "ClipboardImageTypeClassifier recognizes screenshot image types without decoding") {
+            try expect(
+                ClipboardImageTypeClassifier.hasImageType(["public.png"]),
+                "PNG pasteboard type should be treated as an image"
+            )
+            try expect(
+                ClipboardImageTypeClassifier.hasImageType(["public.tiff"]),
+                "TIFF pasteboard type should be treated as an image"
+            )
+            try expect(
+                ClipboardImageTypeClassifier.hasImageType(["Apple PNG pasteboard type"]),
+                "Legacy Apple PNG pasteboard type should be treated as an image"
+            )
+            try expect(
+                ClipboardImageTypeClassifier.hasImageType(["NeXT TIFF v4.0 pasteboard type"]),
+                "Legacy NeXT TIFF pasteboard type should be treated as an image"
+            )
+            try expect(
+                ClipboardImageTypeClassifier.hasImageType(["public.jpeg"]),
+                "JPEG pasteboard type should be treated as an image"
+            )
+            try expect(
+                !ClipboardImageTypeClassifier.hasImageType(["public.utf8-plain-text", "public.file-url"]),
+                "Non-image pasteboard types should not be treated as screenshots"
+            )
         },
     ]
 }
