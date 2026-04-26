@@ -23,7 +23,10 @@ final class ScreenshotWatcher: @unchecked Sendable, ScreenshotWatching {
     private var watchedDirectoryURL: URL?
     private var seenFileNames: Set<String> = []
     private var pendingScanWorkItem: DispatchWorkItem?
+    private var periodicScanWorkItem: DispatchWorkItem?
     private let scanDebounceDelay: DispatchTimeInterval = .milliseconds(5)
+    private let readabilityRetryDelay: DispatchTimeInterval = .milliseconds(100)
+    private let reconciliationScanInterval: DispatchTimeInterval = .seconds(1)
 
     func startWatching(directoryURL: URL) throws {
         try queue.sync {
@@ -77,11 +80,14 @@ final class ScreenshotWatcher: @unchecked Sendable, ScreenshotWatching {
 
         self.source = source
         source.resume()
+        schedulePeriodicScanOnQueue()
     }
 
     private func stopWatchingOnQueue() {
         pendingScanWorkItem?.cancel()
         pendingScanWorkItem = nil
+        periodicScanWorkItem?.cancel()
+        periodicScanWorkItem = nil
 
         if let source {
             self.source = nil
@@ -95,7 +101,7 @@ final class ScreenshotWatcher: @unchecked Sendable, ScreenshotWatching {
         seenFileNames.removeAll()
     }
 
-    private func scheduleScanOnQueue() {
+    private func scheduleScanOnQueue(delay: DispatchTimeInterval? = nil) {
         pendingScanWorkItem?.cancel()
 
         let workItem = DispatchWorkItem { [weak self] in
@@ -103,10 +109,31 @@ final class ScreenshotWatcher: @unchecked Sendable, ScreenshotWatching {
         }
 
         pendingScanWorkItem = workItem
-        queue.asyncAfter(deadline: .now() + scanDebounceDelay, execute: workItem)
+        queue.asyncAfter(deadline: .now() + (delay ?? scanDebounceDelay), execute: workItem)
+    }
+
+    private func schedulePeriodicScanOnQueue() {
+        periodicScanWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.scanForNewScreenshotsOnQueue()
+
+            if self.watchedDirectoryURL != nil {
+                self.schedulePeriodicScanOnQueue()
+            }
+        }
+
+        periodicScanWorkItem = workItem
+        queue.asyncAfter(deadline: .now() + reconciliationScanInterval, execute: workItem)
     }
 
     private func scanForNewScreenshotsOnQueue() {
+        pendingScanWorkItem = nil
+
         guard let watchedDirectoryURL else {
             return
         }
@@ -119,16 +146,22 @@ final class ScreenshotWatcher: @unchecked Sendable, ScreenshotWatching {
             !seenFileNames.contains(candidate.lastPathComponent)
         }
         let sortedCandidates = ScreenshotDirectoryScanner.sortCandidatesByCreationDate(newCandidates)
+        var foundUnreadableCandidate = false
 
         for candidate in sortedCandidates {
             let fileName = candidate.lastPathComponent
-            seenFileNames.insert(fileName)
 
             guard ScreenshotDirectoryScanner.waitUntilReadable(candidate) else {
+                foundUnreadableCandidate = true
                 continue
             }
 
+            seenFileNames.insert(fileName)
             onNewScreenshot?(candidate)
+        }
+
+        if foundUnreadableCandidate {
+            scheduleScanOnQueue(delay: readabilityRetryDelay)
         }
     }
 }

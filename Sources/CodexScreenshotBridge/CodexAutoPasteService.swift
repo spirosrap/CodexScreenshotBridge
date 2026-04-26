@@ -73,8 +73,8 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
         timing.mark("find-app")
 
         try await waitForScreenshotModifiersToRelease(
-            maxChecks: 60,
-            interval: .milliseconds(2),
+            maxChecks: 120,
+            interval: .milliseconds(5),
             failOnTimeout: false
         )
         timing.mark("modifiers")
@@ -96,13 +96,10 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
                 interval: .milliseconds(1)
             )
 
-            if focusedElementKind(expectedPID: runningApp.processIdentifier, allowWebArea: true) != .textLike {
-                clickPoints(
-                    composerActivationPoints(in: runningApp.processIdentifier, layout: .conversation)
-                )
-                try await Task.sleep(for: .milliseconds(12))
-                timing.mark("focus")
-            }
+            let didConfirmFocus = try await focusConversationComposerIfPossible(
+                processID: runningApp.processIdentifier
+            )
+            timing.mark(didConfirmFocus ? "focus-conversation" : "focus-unconfirmed")
 
             try sendCommandVGlobal()
             timing.mark("paste-direct")
@@ -144,7 +141,7 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
             try await Task.sleep(for: .milliseconds(60))
             timing.mark("startup-editor")
         } else if startupFallbackIsAvailable(for: runningApp.processIdentifier),
-                  focusedElementKind(expectedPID: runningApp.processIdentifier, allowWebArea: true) != .textLike {
+                  focusedElementKind(expectedPID: runningApp.processIdentifier, allowWebArea: false) != .textLike {
             clickPoints(
                 composerActivationPoints(in: runningApp.processIdentifier, layout: .firstPrompt)
             )
@@ -407,10 +404,31 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
             return true
         }
 
-        clickPoints(
-            composerActivationPoints(in: processID, layout: .conversation)
-        )
-        try await Task.sleep(for: .milliseconds(12))
+        for _ in 0..<2 {
+            clickPoints(
+                composerActivationPoints(in: processID, layout: .conversation)
+            )
+
+            if try await waitForTextFocus(processID: processID) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private func waitForTextFocus(
+        processID: pid_t,
+        maxChecks: Int = 12,
+        interval: Duration = .milliseconds(15)
+    ) async throws -> Bool {
+        for _ in 0..<maxChecks {
+            if focusedElementKind(expectedPID: processID, allowWebArea: false) == .textLike {
+                return true
+            }
+
+            try await Task.sleep(for: interval)
+        }
 
         return focusedElementKind(expectedPID: processID, allowWebArea: false) == .textLike
     }
