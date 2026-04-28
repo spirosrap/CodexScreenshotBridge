@@ -74,8 +74,6 @@ package protocol ScreenshotSystemSettingsServicing: AnyObject {
 package protocol CodexAutoPasteServing: AnyObject {
     func ensureAccessibilityPermission(prompt: Bool) -> Bool
     func hasAccessibilityPermission() -> Bool
-    func hasScreenRecordingPermission() -> Bool
-    func requestScreenRecordingPermission() -> Bool
     func activateCodexAndPaste(
         codexBundleIdentifier: String?,
         detectInitialPromptScreen: Bool

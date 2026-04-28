@@ -190,12 +190,10 @@ final class FakeScreenshotSystemSettingsService: ScreenshotSystemSettingsServici
 @MainActor
 final class FakeAutoPasteService: CodexAutoPasteServing {
     var accessibilityPermissionGranted = true
-    var screenRecordingPermissionGranted = false
     var accessibilityPromptRequests: [Bool] = []
     var activateCalls: [String?] = []
     var detectInitialPromptScreenCalls: [Bool] = []
     var activationError: Error?
-    var requestScreenRecordingResult = false
 
     func ensureAccessibilityPermission(prompt: Bool) -> Bool {
         accessibilityPromptRequests.append(prompt)
@@ -204,15 +202,6 @@ final class FakeAutoPasteService: CodexAutoPasteServing {
 
     func hasAccessibilityPermission() -> Bool {
         accessibilityPermissionGranted
-    }
-
-    func hasScreenRecordingPermission() -> Bool {
-        screenRecordingPermissionGranted
-    }
-
-    func requestScreenRecordingPermission() -> Bool {
-        screenRecordingPermissionGranted = requestScreenRecordingResult
-        return requestScreenRecordingResult
     }
 
     func activateCodexAndPaste(

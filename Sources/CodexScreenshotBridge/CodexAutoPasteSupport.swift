@@ -144,6 +144,46 @@ package enum ComposerPointCalculator {
     }
 }
 
+package enum ComposerBoundsClassifier {
+    package static func isConversationComposer(
+        _ textBounds: CGRect,
+        in windowBounds: CGRect
+    ) -> Bool {
+        guard !textBounds.isNull,
+              !windowBounds.isNull,
+              textBounds.width > 0,
+              textBounds.height > 0,
+              windowBounds.width > 0,
+              windowBounds.height > 0 else {
+            return false
+        }
+
+        let bottomComposerThreshold = windowBounds.minY + (windowBounds.height * 0.68)
+        return textBounds.midY >= bottomComposerThreshold &&
+            textBounds.intersects(windowBounds)
+    }
+
+    package static func isFirstPromptComposer(
+        _ textBounds: CGRect,
+        in windowBounds: CGRect
+    ) -> Bool {
+        guard !textBounds.isNull,
+              !windowBounds.isNull,
+              textBounds.width > 0,
+              textBounds.height > 0,
+              windowBounds.width > 0,
+              windowBounds.height > 0,
+              textBounds.intersects(windowBounds) else {
+            return false
+        }
+
+        let relativeMidY = (textBounds.midY - windowBounds.minY) / windowBounds.height
+        return relativeMidY >= 0.18 &&
+            relativeMidY <= 0.62 &&
+            textBounds.width >= 80
+    }
+}
+
 package enum CodexWindowCaptureSizer {
     package static let defaultMaxDimension: CGFloat = 640
 

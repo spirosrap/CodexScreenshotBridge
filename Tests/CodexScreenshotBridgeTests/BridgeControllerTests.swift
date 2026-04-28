@@ -11,7 +11,6 @@ enum BridgeControllerTests {
                 let clipboardService = FakeClipboardService()
                 let autoPasteService = FakeAutoPasteService()
                 autoPasteService.accessibilityPermissionGranted = true
-                autoPasteService.screenRecordingPermissionGranted = true
 
                 let controller = BridgeController(
                     defaults: defaults,
@@ -28,7 +27,6 @@ enum BridgeControllerTests {
                 try expect(clipboardWatcher.startCallCount == 1, "Initializer should start clipboard watcher")
                 try expect(controller.isWatching, "Controller should report active watcher")
                 try expect(controller.accessibilityPermissionGranted, "Accessibility permission should refresh from auto-paste service")
-                try expect(controller.screenRecordingPermissionGranted, "Screen Recording permission should refresh from auto-paste service")
                 try expect(controller.screenshotFloatingThumbnailState == .enabled, "Screenshot system settings should refresh on init")
                 try expect(controller.recentEvents.contains(where: { $0.contains("Watching /tmp/screenshots.") }), "Screenshot watch log should be recorded")
                 try expect(controller.statusMessage == "Watching clipboard for screenshot copies.", "Clipboard watcher log should become the current status")
@@ -57,7 +55,7 @@ enum BridgeControllerTests {
                 try expect(controller.statusMessage == "Bridge is disabled.", "Disabled bridge should log disabled state")
             }
         },
-        CodexTestCase(name: "BridgeController permission requests refresh state and log outcome") {
+        CodexTestCase(name: "BridgeController accessibility request refreshes state and logs outcome") {
             try await MainActor.run {
                 let parts = makeController()
                 let controller = parts.controller
@@ -67,11 +65,6 @@ enum BridgeControllerTests {
                 controller.requestAccessibilityAccess()
                 try expect(!controller.accessibilityPermissionGranted, "Accessibility refresh should reflect service state")
                 try expect(controller.statusMessage.contains("Allow Accessibility"), "Accessibility failure should log instructions")
-
-                autoPasteService.requestScreenRecordingResult = true
-                controller.requestScreenRecordingAccess()
-                try expect(controller.screenRecordingPermissionGranted, "Screen Recording refresh should reflect granted state")
-                try expect(controller.statusMessage == "Screen Recording permission is enabled.", "Screen Recording success should log enabled message")
             }
         },
         CodexTestCase(name: "BridgeController disables screenshot floating thumbnail and refreshes state") {
@@ -111,17 +104,17 @@ enum BridgeControllerTests {
                 try expect(parts.clipboardService.copiedURLs == [URL(fileURLWithPath: "/tmp/Screenshot 1.png")], "Screenshot file URL should be copied to clipboard service")
                 try expect(parts.clipboardWatcher.ignoredChangeCounts == [44], "Controller should ignore its own pasteboard write")
                 try expect(didAutoPaste, "Auto-paste should receive trimmed bundle identifier")
-                try expect(parts.autoPasteService.detectInitialPromptScreenCalls == [false], "Startup-screen detector should be off by default for normal conversation speed")
+                try expect(parts.autoPasteService.detectInitialPromptScreenCalls == [false], "Startup-screen paste should stay disabled for normal conversation speed")
                 try expect(parts.controller.recentEvents.contains(where: { $0.contains("Prepared Screenshot 1.png for file paste.") }), "File paste log should be recorded")
                 try expect(parts.controller.recentEvents.contains(where: {
                     $0.contains("Sent Cmd+V to Codex (file screenshot) in 1ms: fake 1ms.")
                 }), "Auto-paste log should be recorded")
             }
         },
-        CodexTestCase(name: "BridgeController can turn on startup-screen detection") {
+        CodexTestCase(name: "BridgeController ignores legacy startup-screen detector setting") {
             let parts = await MainActor.run {
                 let defaults = makeTestDefaults()
-                defaults.set(true, forKey: BridgeController.DefaultsKeys.detectInitialPromptScreen)
+                defaults.set(true, forKey: "detectInitialPromptScreen")
                 return makeController(defaults: defaults)
             }
 
@@ -129,11 +122,11 @@ enum BridgeControllerTests {
                 parts.watcher.emit(URL(fileURLWithPath: "/tmp/Screenshot startup.png"))
             }
             let didPassStartupDetectionFlag = await waitUntil {
-                parts.autoPasteService.detectInitialPromptScreenCalls == [true]
+                parts.autoPasteService.detectInitialPromptScreenCalls == [false]
             }
 
             try await MainActor.run {
-                try expect(didPassStartupDetectionFlag, "Persisted startup-screen detector setting should be passed to auto-paste")
+                try expect(didPassStartupDetectionFlag, "Legacy startup-screen detector setting should not re-enable startup paste")
             }
         },
         CodexTestCase(name: "BridgeController logs screenshot copy failure without auto-paste") {
@@ -324,7 +317,6 @@ enum BridgeControllerTests {
         let screenshotSystemSettingsService = FakeScreenshotSystemSettingsService()
         let autoPasteService = FakeAutoPasteService()
         autoPasteService.accessibilityPermissionGranted = true
-        autoPasteService.screenRecordingPermissionGranted = false
 
         let controller = BridgeController(
             defaults: defaults,

@@ -15,6 +15,7 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
     enum AutoPasteError: LocalizedError {
         case accessibilityPermissionMissing
         case codexNotFound
+        case conversationComposerUnavailable
         case keyInjectionFailed
         case screenshotGestureStillActive
 
@@ -24,6 +25,8 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
                 return "Accessibility permission is required for auto-paste."
             case .codexNotFound:
                 return "Could not find the Codex app. Launch it first or set bundle ID."
+            case .conversationComposerUnavailable:
+                return "Codex conversation composer is not ready. Start the first prompt manually."
             case .keyInjectionFailed:
                 return "Could not synthesize Cmd+V keyboard event."
             case .screenshotGestureStillActive:
@@ -40,14 +43,6 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
 
     func hasAccessibilityPermission() -> Bool {
         ensureAccessibilityPermission(prompt: false)
-    }
-
-    func hasScreenRecordingPermission() -> Bool {
-        CGPreflightScreenCaptureAccess()
-    }
-
-    func requestScreenRecordingPermission() -> Bool {
-        hasScreenRecordingPermission() || CGRequestScreenCaptureAccess()
     }
 
     private let pasteKey: CGKeyCode = 9
@@ -100,6 +95,10 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
                 processID: runningApp.processIdentifier
             )
             timing.mark(didConfirmFocus ? "focus-conversation" : "focus-unconfirmed")
+
+            guard didConfirmFocus else {
+                throw AutoPasteError.conversationComposerUnavailable
+            }
 
             try sendCommandVGlobal()
             timing.mark("paste-direct")
@@ -322,6 +321,40 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
         }
     }
 
+    private func focusedConversationComposerIsActive(processID: pid_t) -> Bool {
+        guard let windowBounds = focusedWindowBounds(for: processID),
+              let bounds = focusedTextLikeElementBounds(expectedPID: processID) else {
+            return false
+        }
+
+        return ComposerBoundsClassifier.isConversationComposer(bounds, in: windowBounds)
+    }
+
+    private func focusedTextLikeElementBounds(expectedPID: pid_t) -> CGRect? {
+        let systemElement = AXUIElementCreateSystemWide()
+        var focusedObject: CFTypeRef?
+
+        guard AXUIElementCopyAttributeValue(
+            systemElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedObject
+        ) == .success,
+        let focusedObject else {
+            return nil
+        }
+
+        let focusedElement = focusedObject as! AXUIElement
+        var focusedPID: pid_t = 0
+        AXUIElementGetPid(focusedElement, &focusedPID)
+
+        guard focusedPID == expectedPID,
+              isTextLikeElement(focusedElement) else {
+            return nil
+        }
+
+        return accessibilityBounds(for: focusedElement)
+    }
+
     private func waitForScreenshotModifiersToRelease(
         maxChecks: Int = 250,
         interval: Duration = .milliseconds(40),
@@ -357,13 +390,9 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
             return
         }
 
+        let originalMouseLocation = CGEvent(source: nil)?.location
+
         for clickPoint in points {
-            let move = CGEvent(
-                mouseEventSource: source,
-                mouseType: .mouseMoved,
-                mouseCursorPosition: clickPoint,
-                mouseButton: .left
-            )
             let down = CGEvent(
                 mouseEventSource: source,
                 mouseType: .leftMouseDown,
@@ -377,9 +406,19 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
                 mouseButton: .left
             )
 
-            move?.post(tap: .cghidEventTap)
             down?.post(tap: .cghidEventTap)
+            if let originalMouseLocation {
+                CGWarpMouseCursorPosition(originalMouseLocation)
+            }
+
             up?.post(tap: .cghidEventTap)
+            if let originalMouseLocation {
+                CGWarpMouseCursorPosition(originalMouseLocation)
+            }
+        }
+
+        if let originalMouseLocation {
+            CGWarpMouseCursorPosition(originalMouseLocation)
         }
     }
 
@@ -400,21 +439,104 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
     }
 
     private func focusConversationComposerIfPossible(processID: pid_t) async throws -> Bool {
-        if focusedElementKind(expectedPID: processID, allowWebArea: false) == .textLike {
+        if focusedConversationComposerIsActive(processID: processID) {
             return true
         }
 
-        for _ in 0..<2 {
-            clickPoints(
-                composerActivationPoints(in: processID, layout: .conversation)
-            )
+        if startupScreenIsVisibleViaAccessibility(processID: processID) {
+            return false
+        }
+
+        if focusedTextLikeElementBounds(expectedPID: processID) != nil {
+            return false
+        }
+
+        var clickedLikelyConversationComposer = false
+
+        if let candidate = conversationComposerElement(in: processID),
+           let candidateBounds = accessibilityBounds(for: candidate) {
+            if AXUIElementSetAttributeValue(
+                candidate,
+                kAXFocusedAttribute as CFString,
+                kCFBooleanTrue
+            ) == .success,
+            try await waitForConversationComposerFocus(processID: processID) {
+                return true
+            }
+
+            clickPoints([CGPoint(x: candidateBounds.midX, y: candidateBounds.midY)])
+            clickedLikelyConversationComposer = true
 
             if try await waitForTextFocus(processID: processID) {
                 return true
             }
         }
 
+        for _ in 0..<2 {
+            let points = composerActivationPoints(in: processID, layout: .conversation)
+            guard !points.isEmpty else {
+                continue
+            }
+
+            clickedLikelyConversationComposer = true
+            clickPoints(points)
+
+            if try await waitForTextFocus(processID: processID) {
+                return true
+            }
+        }
+
+        return clickedLikelyConversationComposer
+    }
+
+    private func startupScreenIsVisibleViaAccessibility(processID: pid_t) -> Bool {
+        guard let (windowElement, windowBounds) = focusedWindowElementAndBounds(for: processID) else {
+            return false
+        }
+
+        var queue: [(element: AXUIElement, depth: Int)] = [(windowElement, 0)]
+        var visitedCount = 0
+
+        while !queue.isEmpty, visitedCount < 300 {
+            let current = queue.removeFirst()
+            visitedCount += 1
+
+            if isTextLikeElement(current.element),
+               let bounds = accessibilityBounds(for: current.element),
+               ComposerBoundsClassifier.isFirstPromptComposer(bounds, in: windowBounds) {
+                return true
+            }
+
+            if accessibilityText(from: current.element).contains(where: containsInitialScreenMarker) {
+                return true
+            }
+
+            guard current.depth < 8 else {
+                continue
+            }
+
+            for child in accessibilityChildren(of: current.element) {
+                queue.append((child, current.depth + 1))
+            }
+        }
+
         return false
+    }
+
+    private func waitForConversationComposerFocus(
+        processID: pid_t,
+        maxChecks: Int = 12,
+        interval: Duration = .milliseconds(15)
+    ) async throws -> Bool {
+        for _ in 0..<maxChecks {
+            if focusedConversationComposerIsActive(processID: processID) {
+                return true
+            }
+
+            try await Task.sleep(for: interval)
+        }
+
+        return focusedConversationComposerIsActive(processID: processID)
     }
 
     private func waitForTextFocus(
@@ -431,6 +553,155 @@ final class CodexAutoPasteService: CodexAutoPasteServing {
         }
 
         return focusedElementKind(expectedPID: processID, allowWebArea: false) == .textLike
+    }
+
+    private func conversationComposerElement(in processID: pid_t) -> AXUIElement? {
+        guard let (windowElement, windowBounds) = focusedWindowElementAndBounds(for: processID) else {
+            return nil
+        }
+
+        var queue: [(element: AXUIElement, depth: Int)] = [(windowElement, 0)]
+        var visitedCount = 0
+        var candidates: [(element: AXUIElement, bounds: CGRect)] = []
+
+        while !queue.isEmpty, visitedCount < 300 {
+            let current = queue.removeFirst()
+            visitedCount += 1
+
+            if isTextLikeElement(current.element),
+               let bounds = accessibilityBounds(for: current.element),
+               ComposerBoundsClassifier.isConversationComposer(bounds, in: windowBounds) {
+                candidates.append((current.element, bounds))
+            }
+
+            guard current.depth < 8 else {
+                continue
+            }
+
+            for child in accessibilityChildren(of: current.element) {
+                queue.append((child, current.depth + 1))
+            }
+        }
+
+        return candidates.max { lhs, rhs in
+            lhs.bounds.midY < rhs.bounds.midY
+        }?.element
+    }
+
+    private func isTextLikeElement(_ element: AXUIElement) -> Bool {
+        var roleObject: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXRoleAttribute as CFString,
+            &roleObject
+        ) == .success,
+        let role = roleObject as? String else {
+            return false
+        }
+
+        switch role {
+        case "AXTextArea",
+             "AXTextField",
+             "AXSearchField",
+             "AXComboBox":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func accessibilityText(from element: AXUIElement) -> [String] {
+        [
+            kAXTitleAttribute,
+            kAXDescriptionAttribute,
+            kAXValueAttribute,
+        ].compactMap { attribute in
+            var object: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(
+                element,
+                attribute as CFString,
+                &object
+            ) == .success else {
+                return nil
+            }
+
+            return object as? String
+        }
+    }
+
+    private func containsInitialScreenMarker(_ text: String) -> Bool {
+        let normalizedText = text.lowercased()
+        return Self.initialScreenMarkers.contains(where: normalizedText.contains)
+    }
+
+    private func accessibilityChildren(of element: AXUIElement) -> [AXUIElement] {
+        var childrenObject: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &childrenObject
+        ) == .success,
+        let children = childrenObject as? [AXUIElement] else {
+            return []
+        }
+
+        return children
+    }
+
+    private func focusedWindowElementAndBounds(for processID: pid_t) -> (AXUIElement, CGRect)? {
+        let appElement = AXUIElementCreateApplication(processID)
+        var windowObject: CFTypeRef?
+
+        guard AXUIElementCopyAttributeValue(
+            appElement,
+            kAXFocusedWindowAttribute as CFString,
+            &windowObject
+        ) == .success,
+        let windowObject else {
+            return nil
+        }
+
+        let windowElement = windowObject as! AXUIElement
+        guard let bounds = accessibilityBounds(for: windowElement) else {
+            return nil
+        }
+
+        return (windowElement, bounds)
+    }
+
+    private func accessibilityBounds(for element: AXUIElement) -> CGRect? {
+        var positionObject: CFTypeRef?
+        var sizeObject: CFTypeRef?
+
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXPositionAttribute as CFString,
+            &positionObject
+        ) == .success,
+        AXUIElementCopyAttributeValue(
+            element,
+            kAXSizeAttribute as CFString,
+            &sizeObject
+        ) == .success,
+        let positionObject,
+        let sizeObject else {
+            return nil
+        }
+
+        let positionValue = positionObject as! AXValue
+        let sizeValue = sizeObject as! AXValue
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+
+        guard AXValueGetType(positionValue) == .cgPoint,
+              AXValueGetType(sizeValue) == .cgSize,
+              AXValueGetValue(positionValue, .cgPoint, &position),
+              AXValueGetValue(sizeValue, .cgSize, &size) else {
+            return nil
+        }
+
+        return CGRect(origin: position, size: size)
     }
 
     private func composerLayout(for processID: pid_t) async -> CodexComposerLayout {

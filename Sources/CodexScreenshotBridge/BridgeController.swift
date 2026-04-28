@@ -7,10 +7,11 @@ package final class BridgeController: ObservableObject {
         package static let bridgeEnabled = "bridgeEnabled"
         package static let autoPasteEnabled = "autoPasteEnabled"
         package static let listenClipboardImages = "listenClipboardImages"
-        package static let detectInitialPromptScreen = "detectInitialPromptScreen"
         package static let screenshotDirectoryPath = "screenshotDirectoryPath"
         package static let codexBundleIdentifier = "codexBundleIdentifier"
     }
+
+    private static let legacyDetectInitialPromptScreenKey = "detectInitialPromptScreen"
 
     @Published package var bridgeEnabled: Bool {
         didSet {
@@ -32,12 +33,6 @@ package final class BridgeController: ObservableObject {
         }
     }
 
-    @Published package var detectInitialPromptScreen: Bool {
-        didSet {
-            defaults.set(detectInitialPromptScreen, forKey: DefaultsKeys.detectInitialPromptScreen)
-        }
-    }
-
     @Published package var codexBundleIdentifier: String {
         didSet {
             defaults.set(codexBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -50,7 +45,6 @@ package final class BridgeController: ObservableObject {
     @Published package private(set) var statusMessage = "Starting..."
     @Published package private(set) var recentEvents: [String] = []
     @Published package private(set) var accessibilityPermissionGranted = false
-    @Published package private(set) var screenRecordingPermissionGranted = false
     @Published package private(set) var screenshotFloatingThumbnailState: ScreenshotFloatingThumbnailState = .unknown
 
     private let defaults: UserDefaults
@@ -87,7 +81,7 @@ package final class BridgeController: ObservableObject {
         bridgeEnabled = defaults.object(forKey: DefaultsKeys.bridgeEnabled) as? Bool ?? true
         autoPasteEnabled = defaults.object(forKey: DefaultsKeys.autoPasteEnabled) as? Bool ?? true
         listenClipboardImages = defaults.object(forKey: DefaultsKeys.listenClipboardImages) as? Bool ?? true
-        detectInitialPromptScreen = defaults.object(forKey: DefaultsKeys.detectInitialPromptScreen) as? Bool ?? false
+        defaults.removeObject(forKey: Self.legacyDetectInitialPromptScreenKey)
         codexBundleIdentifier = defaults.string(forKey: DefaultsKeys.codexBundleIdentifier) ?? ""
 
         configureWatcherCallback()
@@ -189,19 +183,8 @@ package final class BridgeController: ObservableObject {
         }
     }
 
-    package func requestScreenRecordingAccess() {
-        let granted = autoPasteService.requestScreenRecordingPermission()
-        refreshPermissionStatus()
-        if granted {
-            addLog("Screen Recording permission is enabled.")
-        } else {
-            addLog("Allow Screen Recording for reliable startup-screen detection.")
-        }
-    }
-
     package func refreshPermissionStatus() {
         accessibilityPermissionGranted = autoPasteService.hasAccessibilityPermission()
-        screenRecordingPermissionGranted = autoPasteService.hasScreenRecordingPermission()
     }
 
     package func refreshScreenshotSystemSettings() {
@@ -319,7 +302,7 @@ package final class BridgeController: ObservableObject {
             do {
                 let report = try await autoPasteService.activateCodexAndPaste(
                     codexBundleIdentifier: normalizedCodexBundleIdentifier,
-                    detectInitialPromptScreen: detectInitialPromptScreen
+                    detectInitialPromptScreen: false
                 )
                 let totalSuffix = eventStartedAtUptimeNanoseconds.map {
                     " Event-to-paste \(Self.elapsedMilliseconds(since: $0))ms."

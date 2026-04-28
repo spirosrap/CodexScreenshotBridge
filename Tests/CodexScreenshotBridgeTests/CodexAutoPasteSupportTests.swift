@@ -82,6 +82,42 @@ enum CodexAutoPasteSupportTests {
             ], "First prompt activation points should span the centered composer")
             try expect(focusPoints == [CGPoint(x: 140, y: 177.5), CGPoint(x: 240, y: 177.5)], "First prompt focus points should target the editor line")
         },
+        CodexTestCase(name: "ComposerBoundsClassifier accepts bottom conversation composer") {
+            let windowBounds = CGRect(x: 100, y: 100, width: 1000, height: 700)
+            let textBounds = CGRect(x: 220, y: 690, width: 760, height: 60)
+
+            try expect(
+                ComposerBoundsClassifier.isConversationComposer(textBounds, in: windowBounds),
+                "Bottom composer bounds should be treated as the normal conversation input"
+            )
+        },
+        CodexTestCase(name: "ComposerBoundsClassifier rejects centered startup composer") {
+            let windowBounds = CGRect(x: 100, y: 100, width: 1000, height: 700)
+            let textBounds = CGRect(x: 220, y: 320, width: 760, height: 60)
+
+            try expect(
+                !ComposerBoundsClassifier.isConversationComposer(textBounds, in: windowBounds),
+                "Centered startup prompt should not be treated as the normal conversation input"
+            )
+        },
+        CodexTestCase(name: "ComposerBoundsClassifier identifies centered startup composer") {
+            let windowBounds = CGRect(x: 100, y: 100, width: 1000, height: 700)
+            let textBounds = CGRect(x: 220, y: 320, width: 760, height: 60)
+
+            try expect(
+                ComposerBoundsClassifier.isFirstPromptComposer(textBounds, in: windowBounds),
+                "Centered startup prompt should be detected before the bottom-click fallback"
+            )
+        },
+        CodexTestCase(name: "ComposerBoundsClassifier does not treat bottom composer as startup") {
+            let windowBounds = CGRect(x: 100, y: 100, width: 1000, height: 700)
+            let textBounds = CGRect(x: 220, y: 690, width: 760, height: 60)
+
+            try expect(
+                !ComposerBoundsClassifier.isFirstPromptComposer(textBounds, in: windowBounds),
+                "Bottom conversation composer should not be blocked as startup"
+            )
+        },
         CodexTestCase(name: "CodexWindowCaptureSizer downsizes large windows for OCR") {
             let size = CodexWindowCaptureSizer.outputSize(
                 for: CGRect(x: 0, y: 0, width: 2400, height: 1600)

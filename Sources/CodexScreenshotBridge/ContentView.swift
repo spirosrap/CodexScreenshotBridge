@@ -24,9 +24,6 @@ package struct ContentView: View {
             Toggle("Handle clipboard screenshot shortcut", isOn: $controller.listenClipboardImages)
                 .disabled(!controller.bridgeEnabled)
 
-            Toggle("Startup fallback detector", isOn: $controller.detectInitialPromptScreen)
-                .disabled(!controller.bridgeEnabled || !controller.autoPasteEnabled)
-
             Button("Capture Area + Paste") {
                 controller.captureAreaAndPaste()
             }
@@ -113,18 +110,9 @@ package struct ContentView: View {
                 isGranted: controller.accessibilityPermissionGranted
             )
 
-            permissionStatusRow(
-                title: "Screen Recording",
-                isGranted: controller.screenRecordingPermissionGranted
-            )
-
             HStack(spacing: 8) {
                 Button("Request Accessibility") {
                     controller.requestAccessibilityAccess()
-                }
-
-                Button("Request Screen Recording") {
-                    controller.requestScreenRecordingAccess()
                 }
             }
 
@@ -134,7 +122,7 @@ package struct ContentView: View {
                 }
             }
 
-            Text("Screen Recording is used only for startup-screen detection.")
+            Text("Accessibility allows the app to focus Codex and send Cmd+V.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
